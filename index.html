@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>PasteLens</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="titlebar" data-tauri-drag-region>
+        <div class="brand" data-tauri-drag-region>
+          <span class="brand-mark">∑</span>
+          <div data-tauri-drag-region>
+            <strong data-tauri-drag-region>PasteLens</strong>
+            <span data-tauri-drag-region>AI 输出保真阅读器</span>
+          </div>
+        </div>
+        <div class="window-actions">
+          <button
+            id="toggle-history"
+            class="icon-button history-button"
+            type="button"
+            title="渲染历史"
+            aria-label="打开渲染历史"
+            aria-controls="history-sidebar"
+            aria-expanded="false"
+          >
+            <svg class="history-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7" />
+              <path d="M3 4v5h5" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+            <span id="history-count" class="history-count" hidden>0</span>
+          </button>
+          <button
+            id="toggle-settings"
+            class="icon-button settings-button"
+            type="button"
+            title="设置"
+            aria-label="打开设置"
+            aria-controls="settings-popover"
+            aria-expanded="false"
+          >
+            <svg class="settings-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" />
+            </svg>
+          </button>
+          <button
+            id="pin-window"
+            class="icon-button pin-button active"
+            type="button"
+            title="始终置顶"
+            aria-label="始终置顶"
+            aria-pressed="true"
+          >
+            <svg class="pin-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 3h6" />
+              <path d="M10 3v6l-3 4v2h10v-2l-3-4V3" />
+              <path d="M12 15v6" />
+            </svg>
+          </button>
+          <button id="hide-window" class="icon-button" type="button" title="隐藏窗口" aria-label="隐藏窗口">×</button>
+        </div>
+      </header>
+
+      <section id="settings-popover" class="settings-popover" aria-label="设置" hidden>
+        <div class="settings-popover-header">
+          <strong>设置</strong>
+          <span>仅保存在本机</span>
+        </div>
+        <label class="setting-row" for="auto-render-clipboard">
+          <span class="setting-copy">
+            <strong>呼出时渲染剪贴板</strong>
+            <small>打开阅读面板时自动读取当前文本</small>
+          </span>
+          <input id="auto-render-clipboard" type="checkbox" role="switch" />
+          <span class="setting-switch" aria-hidden="true"></span>
+        </label>
+        <label class="setting-row" for="ask-selection-enabled">
+          <span class="setting-copy">
+            <strong>划词问 ChatGPT</strong>
+            <small>选中文本或公式后显示提问按钮</small>
+          </span>
+          <input id="ask-selection-enabled" type="checkbox" role="switch" />
+          <span class="setting-switch" aria-hidden="true"></span>
+        </label>
+        <label class="setting-row setting-row-select" for="ask-context-scope">
+          <span class="setting-copy">
+            <strong>提问上下文</strong>
+            <small>提示词中携带的原始内容范围</small>
+          </span>
+          <select id="ask-context-scope">
+            <option value="document">全文</option>
+            <option value="section">当前章节</option>
+            <option value="paragraph">当前段落</option>
+          </select>
+        </label>
+        <label class="setting-row setting-row-select" for="ask-prompt-template">
+          <span class="setting-copy">
+            <strong>提示词模板</strong>
+            <small>选择提问的侧重点</small>
+          </span>
+          <select id="ask-prompt-template" class="prompt-template-select">
+            <option value="explain">深入解释</option>
+            <option value="plain">通俗解释</option>
+            <option value="symbols">逐符号解析</option>
+            <option value="verify">检查与质疑</option>
+            <option value="custom">自定义</option>
+          </select>
+        </label>
+        <div id="ask-custom-template-setting" class="prompt-template-editor" hidden>
+          <div class="prompt-template-editor-header">
+            <label for="ask-custom-prompt">自定义提问指令</label>
+            <button id="reset-custom-prompt" type="button">重置</button>
+          </div>
+          <textarea
+            id="ask-custom-prompt"
+            rows="5"
+            maxlength="1200"
+            spellcheck="false"
+            placeholder="输入希望 ChatGPT 执行的提问指令……"
+          ></textarea>
+          <p>选区与上下文会自动附带；可使用 <code>{selection}</code> 和 <code>{scope}</code>。</p>
+        </div>
+      </section>
+
+      <div id="history-backdrop" class="history-backdrop" hidden></div>
+      <aside id="history-sidebar" class="history-sidebar" aria-label="渲染历史" aria-hidden="true">
+        <div class="history-sidebar-header">
+          <div>
+            <h2>渲染历史</h2>
+            <p>仅保存在本机</p>
+          </div>
+          <button id="close-history" class="icon-button" type="button" title="关闭历史" aria-label="关闭历史">×</button>
+        </div>
+        <label class="history-search" for="history-search-input">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="6" />
+            <path d="m16 16 4 4" />
+          </svg>
+          <input id="history-search-input" type="search" autocomplete="off" placeholder="搜索历史…" />
+        </label>
+        <div class="history-content">
+          <div id="history-list" class="history-list"></div>
+          <div id="history-empty" class="history-empty">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7" />
+              <path d="M3 4v5h5" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+            <strong>还没有渲染历史</strong>
+            <span>粘贴并完成渲染后会显示在这里</span>
+          </div>
+          <div id="history-no-results" class="history-empty" hidden>
+            <strong>没有匹配的历史</strong>
+            <span>尝试减少关键词或检查拼写</span>
+          </div>
+        </div>
+        <div class="history-sidebar-footer">
+          <button id="clear-history" class="history-clear-button" type="button" disabled>清空历史</button>
+        </div>
+      </aside>
+
+      <nav class="toolbar" aria-label="渲染工具栏">
+        <div class="toolbar-group">
+          <button id="paste-clipboard" class="primary-button" type="button">粘贴并渲染</button>
+          <button id="load-demo" class="secondary-button" type="button">载入示例</button>
+          <button id="clear-source" class="secondary-button" type="button">清空</button>
+        </div>
+        <div class="view-switcher" role="group" aria-label="视图模式">
+          <button type="button" data-mode="preview">预览</button>
+          <button type="button" data-mode="split" class="active">对照</button>
+        </div>
+        <div class="toolbar-group toolbar-group-right">
+          <button id="copy-markdown" class="secondary-button" type="button">复制 Markdown</button>
+          <details id="export-menu" class="export-menu">
+            <summary>导出</summary>
+            <div class="export-menu-popover" role="menu">
+              <button type="button" data-document-export="pdf" role="menuitem">PDF（打印）</button>
+              <button type="button" data-document-export="png" role="menuitem">长图 PNG</button>
+              <button type="button" data-document-export="html" role="menuitem">独立 HTML</button>
+            </div>
+          </details>
+        </div>
+      </nav>
+
+      <main id="workspace" class="workspace" data-mode="split">
+        <section class="editor-pane" aria-label="原始文本">
+          <div class="pane-heading">
+            <span>原始文本</span>
+            <span id="character-count">0 字符</span>
+          </div>
+          <textarea
+            id="source-input"
+            spellcheck="false"
+            placeholder="从 Codex、Claude、Termius 或其他应用复制内容，然后在此粘贴……"
+          ></textarea>
+        </section>
+
+        <section class="preview-pane" aria-label="渲染结果">
+          <div class="pane-heading">
+            <span>渲染结果</span>
+            <div class="pane-heading-actions">
+              <span id="render-status">等待输入</span>
+              <button id="toggle-document-search" type="button" title="在渲染结果中查找（⌘F）" aria-label="查找">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="11" cy="11" r="6" />
+                  <path d="m16 16 4 4" />
+                </svg>
+              </button>
+              <button id="toggle-outline" type="button" title="文档目录" aria-label="打开文档目录" aria-expanded="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 6h12M8 12h12M8 18h12" />
+                  <circle cx="4" cy="6" r="1" />
+                  <circle cx="4" cy="12" r="1" />
+                  <circle cx="4" cy="18" r="1" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div id="document-search" class="document-search" hidden>
+            <input id="document-search-input" type="search" autocomplete="off" placeholder="查找渲染内容" />
+            <span id="document-search-count">0/0</span>
+            <button id="previous-search-match" type="button" title="上一个匹配" aria-label="上一个匹配">↑</button>
+            <button id="next-search-match" type="button" title="下一个匹配" aria-label="下一个匹配">↓</button>
+            <button id="close-document-search" type="button" title="关闭查找" aria-label="关闭查找">×</button>
+          </div>
+          <article id="preview" class="markdown-body">
+            <div class="empty-state">
+              <span class="empty-icon">∑</span>
+              <h1>复制，粘贴，读懂</h1>
+              <p>PasteLens 会在本地恢复终端中丢失的公式分隔符，并渲染 Markdown、LaTeX 与终端表格。</p>
+            </div>
+          </article>
+          <nav id="document-outline" class="document-outline" aria-label="文档目录" hidden>
+            <div class="document-outline-header">
+              <strong>文档目录</strong>
+              <button id="close-outline" type="button" title="关闭目录" aria-label="关闭目录">×</button>
+            </div>
+            <div id="document-outline-list" class="document-outline-list"></div>
+            <p id="document-outline-empty" class="document-outline-empty">当前内容没有标题</p>
+          </nav>
+          <button id="back-to-top" class="back-to-top" type="button" title="返回顶部" aria-label="返回顶部" hidden>↑</button>
+        </section>
+
+      </main>
+
+      <details id="repair-details" class="repair-details">
+        <summary>
+          <span id="repair-summary">未执行自动恢复</span>
+          <span>查看恢复记录</span>
+        </summary>
+        <ol id="repair-list"></ol>
+      </details>
+
+      <footer class="statusbar">
+        <span>本地处理 · 不上传内容 · 不执行粘贴的 HTML</span>
+        <span><kbd>⌥</kbd><kbd>⇧</kbd><kbd>Space</kbd> 呼出</span>
+      </footer>
+    </div>
+    <div id="copy-tooltip" class="copy-tooltip" role="tooltip" hidden>
+      <span id="copy-tooltip-text">复制</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="8" y="8" width="11" height="11" rx="2" />
+        <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+      </svg>
+    </div>
+    <div id="formula-toolbar" class="formula-toolbar" role="toolbar" aria-label="公式操作" hidden>
+      <button type="button" data-formula-action="copy">复制 LaTeX</button>
+      <button type="button" data-formula-action="svg">SVG</button>
+      <button type="button" data-formula-action="png">PNG</button>
+    </div>
+    <div id="selection-toolbar" class="selection-toolbar" role="toolbar" aria-label="划词操作" hidden>
+      <button id="ask-selection" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3a8 8 0 1 0 5.3 14L21 18l-1-3.7A8 8 0 0 0 12 3Z" />
+          <path d="M9 9.5a3.2 3.2 0 0 1 6.1 1.3c0 2.2-3.1 2.3-3.1 4" />
+          <path d="M12 18h.01" />
+        </svg>
+        问 ChatGPT
+      </button>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

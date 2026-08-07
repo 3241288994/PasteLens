@@ -1,0 +1,69 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background-color: rgba(0, 0, 0, 0);
+}
+
+body {
+  display: grid;
+  place-items: center;
+}
+
+.floating-ball {
+  position: relative;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
+  overflow: hidden;
+  border: 0;
+  border-radius: 14px;
+  color: white;
+  background:
+    radial-gradient(circle at 28% 12%, rgba(255, 255, 255, 0.16) 0%, transparent 42%),
+    linear-gradient(155deg, #7774ec 0%, #6663df 48%, #504fc7 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(37, 35, 120, 0.12);
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.floating-ball:hover {
+  transform: scale(1.04);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -1px 0 rgba(37, 35, 120, 0.1);
+}
+
+.floating-ball:active {
+  cursor: grabbing;
+  transform: scale(0.97);
+}
+
+.ball-symbol {
+  position: relative;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 2px 5px rgba(20, 20, 70, 0.35);
+}

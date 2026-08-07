@@ -1,0 +1,66 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "PasteLens",
+  "version": "0.1.0",
+  "identifier": "dev.pastelens.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "ball",
+        "title": "PasteLens",
+        "url": "ball.html",
+        "width": 52,
+        "height": 52,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "devtools": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "acceptFirstMouse": true
+      },
+      {
+        "label": "viewer",
+        "title": "PasteLens",
+        "url": "index.html",
+        "width": 940,
+        "height": 720,
+        "minWidth": 620,
+        "minHeight": 480,
+        "center": true,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": true,
+        "acceptFirstMouse": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Render copied AI and terminal output",
+    "longDescription": "PasteLens restores and renders copied Markdown, LaTeX, and terminal tables locally.",
+    "macOS": {
+      "signingIdentity": "-"
+    }
+  }
+}
