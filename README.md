@@ -5,6 +5,12 @@ PasteLens 是一个本地优先的 AI/终端输出阅读器：从 Codex、Claude
 
 ![PasteLens 从原始 AI 输出到公式、表格、复制提示与本地历史的完整流程](docs/assets/pastelens-demo.gif)
 
+### 划词问 AI
+
+选择上下文范围和提示词模板后，划选文本或公式即可生成包含原始 LaTeX 的提问内容，并打开 ChatGPT 供粘贴使用。
+
+![PasteLens 选择逐符号解析模板、划选 LaTeX 公式并生成 AI 提问](docs/assets/pastelens-ask-ai.gif)
+
 ## 安装
 
 当前预构建 DMG 面向 Apple Silicon（`arm64`），要求 macOS 11 或更高版本。打开 DMG 后，将 `PasteLens.app` 拖入 `Applications`。
