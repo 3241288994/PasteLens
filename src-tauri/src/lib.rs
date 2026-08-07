@@ -86,6 +86,11 @@ fn print_viewer(app: AppHandle) -> Result<(), String> {
     viewer.print().map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -114,7 +119,8 @@ pub fn run() {
             toggle_viewer,
             hide_viewer,
             set_viewer_pinned,
-            print_viewer
+            print_viewer,
+            quit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running PasteLens");

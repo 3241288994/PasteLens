@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { Menu } from "@tauri-apps/api/menu";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./ball.css";
+import { createDeferredQuitController } from "./context-menu-quit";
 
 const ball = document.querySelector<HTMLButtonElement>("#floating-ball");
 if (!ball) {
@@ -12,6 +13,7 @@ const currentWindow = getCurrentWindow();
 let pointerStart: { x: number; y: number } | null = null;
 let dragging = false;
 let contextMenuPromise: Promise<Menu> | null = null;
+const quitController = createDeferredQuitController(() => invoke("quit_app"));
 
 async function toggleViewer(): Promise<void> {
   try {
@@ -31,7 +33,11 @@ function contextMenu(): Promise<Menu> {
           action: () => void toggleViewer(),
         },
         { item: "Separator" },
-        { item: "Quit", text: "退出 PasteLens" },
+        {
+          id: "quit-app",
+          text: "退出 PasteLens",
+          action: () => void quitController.requestQuit(),
+        },
       ],
     });
   }
@@ -89,9 +95,12 @@ ball.addEventListener("contextmenu", async (event) => {
   event.stopPropagation();
   pointerStart = null;
   dragging = false;
+  quitController.beginMenu();
   try {
     await (await contextMenu()).popup(undefined, currentWindow);
   } catch {
     contextMenuPromise = null;
+  } finally {
+    await quitController.endMenu();
   }
 });
