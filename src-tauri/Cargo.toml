@@ -1,6 +1,6 @@
 [package]
 name = "pastelens"
-version = "0.1.0"
+version = "0.1.1"
 description = "A local-first renderer for copied AI and terminal output"
 authors = ["PasteLens contributors"]
 edition = "2021"
