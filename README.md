@@ -2,6 +2,10 @@
 
 PasteLens 是一个本地优先的 AI/终端输出阅读器：从 Codex、Claude、Termius 或其他应用复制文本，通过桌面悬浮球打开阅读面板，自动恢复并渲染 Markdown、LaTeX 与终端表格。
 
+## 演示
+
+![PasteLens 从原始 AI 输出到公式、表格、复制提示与本地历史的完整流程](docs/assets/pastelens-demo.gif)
+
 ## 安装
 
 当前预构建 DMG 面向 Apple Silicon（`arm64`），要求 macOS 11 或更高版本。打开 DMG 后，将 `PasteLens.app` 拖入 `Applications`。
