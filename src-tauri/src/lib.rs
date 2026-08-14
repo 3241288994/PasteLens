@@ -1,5 +1,43 @@
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Position};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Position, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+fn show_viewer(app: &AppHandle) -> Result<(), String> {
+    let viewer = app
+        .get_webview_window("viewer")
+        .ok_or_else(|| "viewer window is unavailable".to_string())?;
+
+    position_viewer(app)?;
+    viewer.show().map_err(|error| error.to_string())?;
+    viewer.set_focus().map_err(|error| error.to_string())?;
+    viewer
+        .emit("viewer-opened", ())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn position_ball_for_windows(app: &AppHandle) -> Result<(), String> {
+    let ball = app
+        .get_webview_window("ball")
+        .ok_or_else(|| "floating ball window is unavailable".to_string())?;
+    let monitor = ball
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .or(app.primary_monitor().map_err(|error| error.to_string())?);
+
+    let Some(monitor) = monitor else {
+        return Ok(());
+    };
+
+    let work_area = monitor.work_area();
+    let ball_size = ball.outer_size().map_err(|error| error.to_string())?;
+    let margin = 16;
+    let x = work_area.position.x + work_area.size.width as i32 - ball_size.width as i32 - margin;
+    let y = work_area.position.y
+        + ((work_area.size.height as i32 - ball_size.height as i32) / 2).max(0);
+
+    ball.set_position(Position::Physical(PhysicalPosition::new(x, y)))
+        .map_err(|error| error.to_string())
+}
 
 fn position_viewer(app: &AppHandle) -> Result<(), String> {
     let ball = app
@@ -52,12 +90,7 @@ fn toggle_viewer(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    position_viewer(&app)?;
-    viewer.show().map_err(|error| error.to_string())?;
-    viewer.set_focus().map_err(|error| error.to_string())?;
-    viewer
-        .emit("viewer-opened", ())
-        .map_err(|error| error.to_string())
+    show_viewer(&app)
 }
 
 #[tauri::command]
@@ -94,6 +127,9 @@ fn quit_app(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let _ = show_viewer(app);
+        }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -109,6 +145,19 @@ pub fn run() {
         )
         .setup(|app| {
             let _ = app.global_shortcut().register("Alt+Shift+Space");
+
+            if let Some(viewer) = app.get_webview_window("viewer") {
+                let window = viewer.clone();
+                viewer.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                });
+            }
+
+            #[cfg(target_os = "windows")]
+            let _ = position_ball_for_windows(app.handle());
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);

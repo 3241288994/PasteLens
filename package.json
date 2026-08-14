@@ -9,8 +9,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "desktop:dev": "./scripts/tauri-local.sh dev",
-    "desktop:build": "./scripts/tauri-local.sh build",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:dev:mac": "./scripts/tauri-local.sh dev",
+    "desktop:build:mac": "./scripts/tauri-local.sh build",
     "tauri": "tauri"
   },
   "dependencies": {

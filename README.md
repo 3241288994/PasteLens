@@ -13,6 +13,12 @@ PasteLens 是一个本地优先的 AI/终端输出阅读器：从 Codex、Claude
 
 ## 安装
 
+### Windows
+
+Windows 10/11（x64）使用 `PasteLens_*_x64-setup.exe` 或 MSI 安装包。系统需要 Microsoft Edge WebView2 Runtime；Windows 10/11 通常已预装，安装器也会在缺失时引导安装。启动后悬浮球默认停靠在主显示器右侧，可用 `Alt + Shift + Space` 打开或隐藏阅读窗口，右键悬浮球可退出应用。
+
+### macOS
+
 当前预构建 DMG 面向 Apple Silicon（`arm64`），要求 macOS 11 或更高版本。打开 DMG 后，将 `PasteLens.app` 拖入 `Applications`。
 
 社区预览版使用 ad-hoc 签名，尚未经过 Apple 公证。首次启动若被 macOS 拦截，请在 Finder 中右键 `PasteLens.app`，选择“打开”并确认。
@@ -49,16 +55,26 @@ pnpm test
 pnpm desktop:dev
 ```
 
+Windows PowerShell 若禁止执行 npm 生成的 `.ps1` 包装脚本，可使用等价的 `pnpm.cmd` 命令：
+
+```powershell
+pnpm.cmd install
+pnpm.cmd test
+pnpm.cmd desktop:dev
+```
+
 构建桌面应用：
 
 ```bash
 pnpm desktop:build
 ```
 
+Windows 安装包输出到 `src-tauri/target/release/bundle/nsis/` 和 `src-tauri/target/release/bundle/msi/`。
+
 只生成用于 GitHub Release 的 macOS DMG：
 
 ```bash
-CI=true ./scripts/tauri-local.sh build --bundles dmg
+pnpm desktop:build:mac -- --bundles dmg
 ```
 
 产物位于 `src-tauri/target/release/bundle/dmg/`。
