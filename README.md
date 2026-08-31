@@ -13,6 +13,11 @@ PasteLens 是一个本地优先的 AI/终端输出阅读器：从 Codex、Claude
 
 ![PasteLens 选择逐符号解析模板、划选 LaTeX 公式并生成 AI 提问](docs/assets/pastelens-ask-ai.gif)
 
+### 记录归类
+可将记录归档到具体文件夹下并贴标签，后续可按文件夹或标签查询
+<img width="670" height="914" alt="image" src="https://github.com/user-attachments/assets/3150b2c1-abf9-4985-b999-4b464b56a507" />
+
+
 ## 安装
 
 ### Windows
