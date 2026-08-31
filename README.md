@@ -1,6 +1,8 @@
 # PasteLens
 
 PasteLens 是一个本地优先的 AI/终端输出阅读器：从 Codex、Claude、Termius 或其他应用复制文本，通过桌面悬浮球打开阅读面板，自动恢复并渲染 Markdown、LaTeX 与终端表格。其设计初衷是解决 codex cli 的 latex 渲染问题，终端输出的 codex 回复由于公式，格式无渲染难以阅读，在 codex cli 下通过选中复制或ctrl+o 复制最后一次回复，可在悬浮球中观看渲染后文本并进行公式复制，文字检索，超链接跳转，以及 ai 追问。
+
+最新稳定版为 [`v0.2.0`](https://github.com/3241288994/PasteLens/releases/tag/v0.2.0)。
 ## 演示
 
 ![PasteLens 从原始 AI 输出到公式、表格、复制提示与本地历史的完整流程](docs/assets/pastelens-demo.gif)
@@ -19,7 +21,7 @@ Windows 10/11（x64）使用 `PasteLens_*_x64-setup.exe` 或 MSI 安装包。系
 
 ### macOS
 
-当前预构建 DMG 面向 Apple Silicon（`arm64`），要求 macOS 11 或更高版本。打开 DMG 后，将 `PasteLens.app` 拖入 `Applications`。
+当前预构建 DMG 面向 Apple Silicon（`arm64`），要求 macOS 11 或更高版本。请从 [GitHub Releases](https://github.com/3241288994/PasteLens/releases/latest) 下载 DMG，打开后将 `PasteLens.app` 拖入 `Applications`。
 
 社区预览版使用 ad-hoc 签名，尚未经过 Apple 公证。首次启动若被 macOS 拦截，请在 Finder 中右键 `PasteLens.app`，选择“打开”并确认。
 
@@ -28,7 +30,11 @@ Windows 10/11（x64）使用 `PasteLens_*_x64-setup.exe` 或 MSI 安装包。系
 - 双窗口桌面结构：可拖动悬浮球与贴边阅读面板。
 - 右键悬浮球可打开/隐藏阅读窗口或退出应用。
 - 可选在呼出阅读面板时自动读取并渲染当前剪贴板，偏好仅保存在本机，也保留手动粘贴入口。
-- 本地渲染历史侧边栏，支持搜索、置顶、键盘导航、滚动位置恢复、单条删除和清空。
+- 不限数量的本机渲染历史，首次升级时会自动从旧浏览器存储迁移到 SQLite；历史内容不会上传。
+- 科研项目库：每条历史可归入一个项目，支持新建、筛选、重命名与安全删除；删除项目只会将其历史移回收件箱。
+- 多标签归档：可为历史添加多个标签，按标签组合筛选，并可勾选多条历史批量移动项目或添加标签。
+- 当前文档顶部的“归档”菜单可直接选择/新建项目、添加或移除标签；首次归档会自动保存当前文档。
+- 历史侧边栏支持搜索、置顶、键盘导航、滚动位置恢复、单条删除和清空。
 - 全局快捷键：`Option/Alt + Shift + Space`。
 - 标准 GFM Markdown、KaTeX 数学公式和 Mermaid 图表渲染。
 - 代码块支持语法高亮、一键复制、自动换行与行号切换。
@@ -39,11 +45,11 @@ Windows 10/11（x64）使用 `PasteLens_*_x64-setup.exe` 或 MSI 安装包。系
 - 恢复终端吞掉反斜杠后的裸 `[` / `]` 展示公式。
 - 恢复 `(M_G)`、`(R^2>0)` 等高置信度行内公式。
 - 根据 Unicode 显示宽度恢复带中文内容的终端表格。
-- 预览与原文对照两种视图，可一键复制修复后的标准 Markdown。
+- 预览与原文对照两种视图；粘贴、载入示例与新打开界面默认进入预览，可一键复制修复后的标准 Markdown。
 - 支持导出长图 PNG、独立 HTML，并通过系统打印面板保存 PDF。
 - 长文支持全文查找、标题目录与返回顶部。
 - 每一处自动恢复都有行号、理由与置信度记录。
-- 历史记录仅保存在本机浏览器存储中，可随时清空；内容不会上传，也不会执行其中的 HTML。
+- 历史、项目和标签均保存在本机 SQLite 数据库中，可随时清空；不会上传内容，也不会执行其中的 HTML。
 
 ## 开发
 
@@ -55,6 +61,12 @@ pnpm test
 pnpm desktop:dev
 ```
 
+macOS 如需使用项目内 Rust 工具链，请改用：
+
+```bash
+pnpm desktop:dev:mac
+```
+
 Windows PowerShell 若禁止执行 npm 生成的 `.ps1` 包装脚本，可使用等价的 `pnpm.cmd` 命令：
 
 ```powershell
@@ -63,10 +75,12 @@ pnpm.cmd test
 pnpm.cmd desktop:dev
 ```
 
-构建桌面应用：
+构建桌面应用。macOS 如未将 Rust 安装到系统路径，请使用项目内工具链脚本：
 
 ```bash
 pnpm desktop:build
+# macOS 本机推荐
+pnpm desktop:build:mac
 ```
 
 Windows 安装包输出到 `src-tauri/target/release/bundle/nsis/` 和 `src-tauri/target/release/bundle/msi/`。
