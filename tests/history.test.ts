@@ -3,6 +3,7 @@ import {
   createHistoryEntry,
   filterHistoryEntries,
   parseHistoryEntries,
+  parseHistoryWorkspace,
   upsertHistoryEntry,
 } from "../src/history";
 
@@ -57,5 +58,45 @@ describe("render history", () => {
 
     expect(filterHistoryEntries(entries, "sgrcp").map((entry) => entry.id)).toEqual(["one"]);
     expect(filterHistoryEntries(entries, "局部").map((entry) => entry.id)).toEqual(["two"]);
+  });
+
+  it("does not impose a fixed history-count limit", () => {
+    const entries = Array.from({ length: 31 }, (_, index) =>
+      createHistoryEntry(
+        `entry-${index}`,
+        `source-${index}`,
+        `## 内容 ${index}`,
+        index,
+      ),
+    );
+
+    expect(parseHistoryEntries(JSON.stringify(entries))).toHaveLength(31);
+    expect(upsertHistoryEntry(entries.slice(0, 30), entries[30]!)).toHaveLength(31);
+  });
+
+  it("filters entries by inbox, project, pinned state, and tags", () => {
+    const entries = [
+      createHistoryEntry("inbox", "inbox source", "收件箱", 10, { tagIds: ["methods"] }),
+      createHistoryEntry("project", "project source", "项目内容", 20, {
+        projectId: "vision",
+        pinned: true,
+        tagIds: ["methods", "atlas"],
+      }),
+    ];
+
+    expect(filterHistoryEntries(entries, "", { projectId: null }).map((entry) => entry.id)).toEqual(["inbox"]);
+    expect(filterHistoryEntries(entries, "", { projectId: "vision", pinnedOnly: true }).map((entry) => entry.id)).toEqual(["project"]);
+    expect(filterHistoryEntries(entries, "", { tagIds: ["methods", "atlas"] }).map((entry) => entry.id)).toEqual(["project"]);
+  });
+
+  it("migrates legacy history into the inbox and validates workspace relations", () => {
+    const workspace = parseHistoryWorkspace({
+      entries: [{ id: "legacy", source: "source", title: "标题", summary: "摘要", updatedAt: 1 }],
+      projects: [{ id: "vision", name: "视觉科研", color: "violet", createdAt: 1 }],
+      tags: [{ id: "atlas", name: "Atlas", createdAt: 1 }],
+    });
+
+    expect(workspace?.entries[0]?.projectId).toBeNull();
+    expect(workspace?.entries[0]?.tagIds).toEqual([]);
   });
 });

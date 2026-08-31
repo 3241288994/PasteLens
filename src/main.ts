@@ -35,10 +35,20 @@ import {
   createHistoryEntry,
   filterHistoryEntries,
   parseHistoryEntries,
+  parseHistoryWorkspace,
   sortHistoryEntries,
   upsertHistoryEntry,
+  type HistoryFilter,
+  type HistoryProject,
+  type HistoryTag,
+  type HistoryWorkspace,
   type RenderHistoryEntry,
 } from "./history";
+import {
+  hasNativeHistoryStore,
+  loadNativeHistoryWorkspace,
+  saveNativeHistoryWorkspace,
+} from "./history-store";
 import { renderMermaidBlocks } from "./mermaid-renderer";
 import {
   ASK_CONTEXT_SCOPE_STORAGE_KEY,
@@ -98,7 +108,30 @@ const historyCloseButton = requiredElement<HTMLButtonElement>("#close-history");
 const historyClearButton = requiredElement<HTMLButtonElement>("#clear-history");
 const historySearchInput = requiredElement<HTMLInputElement>("#history-search-input");
 const historyNoResults = requiredElement<HTMLElement>("#history-no-results");
+const historyProjectList = requiredElement<HTMLElement>("#history-project-list");
+const historyTagList = requiredElement<HTMLElement>("#history-tag-list");
+const newHistoryProjectButton = requiredElement<HTMLButtonElement>("#new-history-project");
+const historyProjectCreateForm = requiredElement<HTMLFormElement>("#history-project-create-form");
+const historyProjectNameInput = requiredElement<HTMLInputElement>("#history-project-name");
+const saveHistoryProjectButton = requiredElement<HTMLButtonElement>("#save-history-project");
+const cancelHistoryProjectButton = requiredElement<HTMLButtonElement>("#cancel-history-project");
+const clearHistoryTagFilterButton = requiredElement<HTMLButtonElement>("#clear-history-tag-filter");
+const historyBulkActions = requiredElement<HTMLElement>("#history-bulk-actions");
+const historySelectionCount = requiredElement<HTMLElement>("#history-selection-count");
+const historySelectionProject = requiredElement<HTMLSelectElement>("#history-selection-project");
+const applyHistoryProjectButton = requiredElement<HTMLButtonElement>("#apply-history-project");
+const historyTagInput = requiredElement<HTMLInputElement>("#history-tag-input");
+const applyHistoryTagsButton = requiredElement<HTMLButtonElement>("#apply-history-tags");
+const clearHistorySelectionButton = requiredElement<HTMLButtonElement>("#clear-history-selection");
 const exportMenu = requiredElement<HTMLDetailsElement>("#export-menu");
+const documentProjectSelect = requiredElement<HTMLSelectElement>("#document-project-select");
+const documentNewProjectButton = requiredElement<HTMLButtonElement>("#document-new-project");
+const documentProjectCreateForm = requiredElement<HTMLFormElement>("#document-project-create-form");
+const documentProjectNameInput = requiredElement<HTMLInputElement>("#document-project-name");
+const documentTagList = requiredElement<HTMLElement>("#document-tag-list");
+const documentTagForm = requiredElement<HTMLFormElement>("#document-tag-form");
+const documentTagInput = requiredElement<HTMLInputElement>("#document-tag-input");
+const documentArchiveHint = requiredElement<HTMLElement>("#document-archive-hint");
 const documentSearchButton = requiredElement<HTMLButtonElement>("#toggle-document-search");
 const documentSearch = requiredElement<HTMLElement>("#document-search");
 const documentSearchInput = requiredElement<HTMLInputElement>("#document-search-input");
@@ -126,6 +159,8 @@ const historyDateFormatter = new Intl.DateTimeFormat("zh-CN", {
 });
 let currentResult: RecoveryResult = recoverTerminalMarkdown("");
 let historyEntries = loadHistoryEntries();
+let historyProjects: HistoryProject[] = [];
+let historyTags: HistoryTag[] = [];
 let currentHistoryId: string | null = null;
 let renderSequence = 0;
 let renderTimer: number | undefined;
@@ -133,6 +168,7 @@ let copyFeedbackTimer: number | undefined;
 let formulaToolbarTimer: number | undefined;
 let selectionToolbarTimer: number | undefined;
 let historyScrollTimer: number | undefined;
+let historyPersistTimer: number | undefined;
 let activeCopyTarget: HTMLElement | null = null;
 let activeFormula: HTMLElement | null = null;
 let activeAskSelection: ActiveAskSelection | null = null;
@@ -141,6 +177,12 @@ let activeSearchMatch = -1;
 let outlineItems: DocumentOutlineItem[] = [];
 let pendingHistoryScrollTop: number | null = null;
 let historyOpen = false;
+let historyScope: "all" | "inbox" | "pinned" | string = "all";
+let activeHistoryTagIds = new Set<string>();
+let selectedHistoryIds = new Set<string>();
+let editingHistoryProjectId: string | null = null;
+let pendingHistoryProjectDeleteId: string | null = null;
+const HISTORY_PROJECT_COLORS = ["#6c63e8", "#2f9d8f", "#d87c4a", "#b35db8", "#4d83d6", "#b28a27"];
 let settingsOpen = false;
 let documentSearchOpen = false;
 let outlineOpen = false;
@@ -243,6 +285,7 @@ function persistHistoryEntries(): void {
     try {
       localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(candidates));
       historyEntries = candidates;
+      scheduleNativeHistoryPersistence();
       return;
     } catch {
       candidates = candidates.slice(0, -1);
@@ -252,8 +295,47 @@ function persistHistoryEntries(): void {
   try {
     localStorage.removeItem(HISTORY_STORAGE_KEY);
   } catch {
+    // The native database remains available even when browser storage is unavailable.
+  }
+  historyEntries = candidates;
+  scheduleNativeHistoryPersistence();
+}
+
+function currentHistoryWorkspace(): HistoryWorkspace {
+  return {
+    entries: historyEntries,
+    projects: historyProjects,
+    tags: historyTags,
+  };
+}
+
+function scheduleNativeHistoryPersistence(): void {
+  if (!hasNativeHistoryStore()) {
     return;
   }
+  window.clearTimeout(historyPersistTimer);
+  historyPersistTimer = window.setTimeout(() => {
+    const workspace = currentHistoryWorkspace();
+    void saveNativeHistoryWorkspace(workspace).catch((error) => {
+      console.error("Unable to persist history workspace", error);
+    });
+  }, 120);
+}
+
+async function initializeHistoryWorkspace(): Promise<void> {
+  try {
+    const persisted = parseHistoryWorkspace(await loadNativeHistoryWorkspace());
+    if (persisted) {
+      historyEntries = persisted.entries;
+      historyProjects = persisted.projects;
+      historyTags = persisted.tags;
+    } else if (hasNativeHistoryStore()) {
+      await saveNativeHistoryWorkspace(currentHistoryWorkspace());
+    }
+  } catch (error) {
+    console.error("Unable to initialize history workspace", error);
+  }
+  renderHistoryList();
 }
 
 function createHistoryId(): string {
@@ -296,21 +378,167 @@ function setHistoryOpen(open: boolean): void {
   }
 }
 
+function historyFilter(): HistoryFilter {
+  const filter: HistoryFilter = { tagIds: activeHistoryTagIds };
+  if (historyScope === "inbox") {
+    filter.projectId = null;
+  } else if (historyScope === "pinned") {
+    filter.pinnedOnly = true;
+  } else if (historyScope !== "all") {
+    filter.projectId = historyScope;
+  }
+  return filter;
+}
+
+function projectForEntry(entry: RenderHistoryEntry): HistoryProject | undefined {
+  return historyProjects.find((project) => project.id === entry.projectId);
+}
+
+function tagsForEntry(entry: RenderHistoryEntry): HistoryTag[] {
+  return entry.tagIds.flatMap((tagId) => {
+    const tag = historyTags.find((candidate) => candidate.id === tagId);
+    return tag ? [tag] : [];
+  });
+}
+
+function renderHistoryLibrary(): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-history-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.historyFilter === historyScope);
+  });
+
+  historyProjectList.replaceChildren();
+  for (const project of [...historyProjects].sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))) {
+    const row = document.createElement("div");
+    const button = document.createElement("button");
+    const dot = document.createElement("span");
+    const label = document.createElement("span");
+    const count = document.createElement("small");
+    const renameButton = document.createElement("button");
+    const deleteButton = document.createElement("button");
+    row.className = "history-project-row";
+    button.type = "button";
+    button.className = "history-project-button";
+    button.dataset.historyProjectId = project.id;
+    button.classList.toggle("active", historyScope === project.id);
+    dot.className = "history-project-dot";
+    dot.style.background = project.color;
+    label.textContent = project.name;
+    count.textContent = String(historyEntries.filter((entry) => entry.projectId === project.id).length);
+    renameButton.type = "button";
+    renameButton.className = "history-project-action";
+    renameButton.dataset.renameHistoryProjectId = project.id;
+    renameButton.title = `重命名“${project.name}”`;
+    renameButton.setAttribute("aria-label", renameButton.title);
+    renameButton.textContent = "✎";
+    deleteButton.type = "button";
+    deleteButton.className = "history-project-action";
+    deleteButton.dataset.deleteHistoryProjectId = project.id;
+    deleteButton.title = pendingHistoryProjectDeleteId === project.id
+      ? `再次点击确认删除“${project.name}”`
+      : `删除“${project.name}”`;
+    deleteButton.setAttribute("aria-label", deleteButton.title);
+    deleteButton.classList.toggle("delete-confirm", pendingHistoryProjectDeleteId === project.id);
+    deleteButton.textContent = pendingHistoryProjectDeleteId === project.id ? "确认" : "×";
+    button.append(dot, label, count);
+    row.append(button, renameButton, deleteButton);
+    historyProjectList.append(row);
+  }
+
+  historyTagList.replaceChildren();
+  for (const tag of historyTags.filter((candidate) =>
+    historyEntries.some((entry) => entry.tagIds.includes(candidate.id)),
+  )) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "history-tag-filter";
+    button.dataset.historyTagId = tag.id;
+    button.classList.toggle("active", activeHistoryTagIds.has(tag.id));
+    button.textContent = `# ${tag.name}`;
+    historyTagList.append(button);
+  }
+  clearHistoryTagFilterButton.hidden = activeHistoryTagIds.size === 0;
+}
+
+function currentDocumentHistoryEntry(): RenderHistoryEntry | undefined {
+  return currentHistoryId ? historyEntries.find((entry) => entry.id === currentHistoryId) : undefined;
+}
+
+function renderDocumentArchive(): void {
+  const entry = currentDocumentHistoryEntry();
+  documentProjectSelect.replaceChildren();
+  const inbox = document.createElement("option");
+  inbox.value = "";
+  inbox.textContent = "收件箱（未归类）";
+  documentProjectSelect.append(inbox);
+  for (const project of [...historyProjects].sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))) {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = project.name;
+    documentProjectSelect.append(option);
+  }
+  documentProjectSelect.value = entry?.projectId ?? "";
+  documentProjectSelect.disabled = !sourceInput.value.trim();
+  documentNewProjectButton.disabled = !sourceInput.value.trim();
+  documentTagInput.disabled = !sourceInput.value.trim();
+  documentTagForm.querySelector("button")!.disabled = !sourceInput.value.trim();
+  documentTagList.replaceChildren();
+  for (const tag of entry ? tagsForEntry(entry) : []) {
+    const chip = document.createElement("span");
+    const remove = document.createElement("button");
+    chip.className = "document-tag-chip";
+    chip.textContent = `# ${tag.name}`;
+    remove.type = "button";
+    remove.dataset.removeDocumentTagId = tag.id;
+    remove.title = `移除标签“${tag.name}”`;
+    remove.setAttribute("aria-label", remove.title);
+    remove.textContent = "×";
+    chip.append(remove);
+    documentTagList.append(chip);
+  }
+  documentArchiveHint.textContent = sourceInput.value.trim()
+    ? (entry ? "归档已保存在本机历史中" : "选择项目或添加标签会自动保存该文档")
+    : "粘贴并渲染文档后即可归档";
+}
+
+function renderHistoryBulkActions(): void {
+  const knownIds = new Set(historyEntries.map((entry) => entry.id));
+  selectedHistoryIds = new Set([...selectedHistoryIds].filter((id) => knownIds.has(id)));
+  const count = selectedHistoryIds.size;
+  historyBulkActions.hidden = count === 0;
+  historySelectionCount.textContent = `已选 ${count} 条`;
+  historySelectionProject.replaceChildren();
+  const inbox = document.createElement("option");
+  inbox.value = "";
+  inbox.textContent = "移动到收件箱";
+  historySelectionProject.append(inbox);
+  for (const project of [...historyProjects].sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))) {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = project.name;
+    historySelectionProject.append(option);
+  }
+}
+
 function renderHistoryList(): void {
   historyList.replaceChildren();
   const count = historyEntries.length;
-  const filteredEntries = filterHistoryEntries(historyEntries, historySearchInput.value);
+  const filteredEntries = filterHistoryEntries(historyEntries, historySearchInput.value, historyFilter());
   historyCount.textContent = String(count);
   historyCount.hidden = count === 0;
   historyEmpty.hidden = count !== 0;
   historyNoResults.hidden = count === 0 || filteredEntries.length !== 0;
   historyClearButton.disabled = count === 0;
+  renderHistoryLibrary();
+  renderHistoryBulkActions();
+  renderDocumentArchive();
 
   for (const entry of filteredEntries) {
     const item = document.createElement("article");
+    const selection = document.createElement("input");
     const openButton = document.createElement("button");
     const title = document.createElement("strong");
     const summary = document.createElement("span");
+    const meta = document.createElement("div");
     const time = document.createElement("time");
     const pinEntryButton = document.createElement("button");
     const deleteButton = document.createElement("button");
@@ -318,15 +546,37 @@ function renderHistoryList(): void {
     item.className = "history-entry";
     item.classList.toggle("active", entry.id === currentHistoryId);
     item.classList.toggle("pinned", entry.pinned);
+    item.classList.toggle("selected", selectedHistoryIds.has(entry.id));
+    selection.className = "history-entry-select";
+    selection.type = "checkbox";
+    selection.dataset.historySelectionId = entry.id;
+    selection.checked = selectedHistoryIds.has(entry.id);
+    selection.setAttribute("aria-label", `选择历史：${entry.title}`);
     openButton.className = "history-entry-open";
     openButton.type = "button";
     openButton.dataset.historyId = entry.id;
     openButton.title = entry.title;
     title.textContent = entry.title;
     summary.textContent = entry.summary;
+    meta.className = "history-entry-meta";
+    const project = projectForEntry(entry);
+    if (project) {
+      const projectChip = document.createElement("span");
+      projectChip.className = "history-entry-project";
+      projectChip.textContent = project.name;
+      projectChip.title = project.name;
+      meta.append(projectChip);
+    }
+    for (const tag of tagsForEntry(entry)) {
+      const tagChip = document.createElement("span");
+      tagChip.className = "history-entry-tag";
+      tagChip.textContent = `# ${tag.name}`;
+      tagChip.title = tag.name;
+      meta.append(tagChip);
+    }
     time.dateTime = new Date(entry.updatedAt).toISOString();
     time.textContent = historyDateFormatter.format(entry.updatedAt);
-    openButton.append(title, summary, time);
+    openButton.append(title, summary, meta, time);
 
     pinEntryButton.className = "history-entry-pin";
     pinEntryButton.type = "button";
@@ -348,7 +598,7 @@ function renderHistoryList(): void {
     deleteButton.setAttribute("aria-label", `删除历史：${entry.title}`);
     deleteButton.textContent = "×";
 
-    item.append(openButton, pinEntryButton, deleteButton);
+    item.append(selection, openButton, pinEntryButton, deleteButton);
     historyList.append(item);
   }
 }
@@ -360,6 +610,8 @@ function saveHistorySnapshot(source: string): void {
   const entry = createHistoryEntry(id, source, currentResult.normalized, Date.now(), {
     pinned: previous?.pinned,
     scrollTop: previous?.scrollTop,
+    projectId: previous?.projectId,
+    tagIds: previous?.tagIds,
   });
   historyEntries = upsertHistoryEntry(historyEntries, entry);
   currentHistoryId = id;
@@ -414,12 +666,172 @@ function persistCurrentHistoryScroll(): void {
 
 function deleteHistoryEntry(id: string): void {
   historyEntries = historyEntries.filter((entry) => entry.id !== id);
+  selectedHistoryIds.delete(id);
   if (currentHistoryId === id) {
     currentHistoryId = null;
     viewingHistoryEntry = sourceInput.value.trim().length > 0;
   }
   persistHistoryEntries();
   renderHistoryList();
+}
+
+function normalizedLibraryName(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/g, " ");
+}
+
+function libraryNameKey(value: string): string {
+  return normalizedLibraryName(value).toLocaleLowerCase();
+}
+
+function setHistoryProjectCreateOpen(open: boolean, project?: HistoryProject): void {
+  editingHistoryProjectId = project?.id ?? null;
+  historyProjectCreateForm.hidden = !open;
+  newHistoryProjectButton.hidden = open;
+  saveHistoryProjectButton.textContent = project ? "保存" : "创建";
+  if (open) {
+    historyProjectNameInput.value = project?.name ?? "";
+    historyProjectNameInput.focus();
+  } else {
+    historyProjectNameInput.value = "";
+  }
+}
+
+function createHistoryProject(nameInput: string, selectProject = true): HistoryProject | undefined {
+  const name = normalizedLibraryName(nameInput);
+  if (!name) {
+    renderStatus.textContent = "请输入项目名称";
+    historyProjectNameInput.focus();
+    return undefined;
+  }
+  if (historyProjects.some((project) => libraryNameKey(project.name) === libraryNameKey(name))) {
+    renderStatus.textContent = "已存在同名科研项目";
+    return undefined;
+  }
+  const project: HistoryProject = {
+    id: `project-${createHistoryId()}`,
+    name,
+    color: HISTORY_PROJECT_COLORS[historyProjects.length % HISTORY_PROJECT_COLORS.length] ?? "#6c63e8",
+    createdAt: Date.now(),
+  };
+  historyProjects = [...historyProjects, project];
+  if (selectProject) {
+    historyScope = project.id;
+  }
+  persistHistoryEntries();
+  setHistoryProjectCreateOpen(false);
+  renderHistoryList();
+  renderStatus.textContent = `已创建项目“${name}”`;
+  return project;
+}
+
+function ensureCurrentDocumentHistory(): RenderHistoryEntry | undefined {
+  const source = sourceInput.value;
+  if (!source.trim()) {
+    renderStatus.textContent = "请先粘贴并渲染文档";
+    return undefined;
+  }
+  if (!currentDocumentHistoryEntry()) {
+    saveHistorySnapshot(source);
+  }
+  return currentDocumentHistoryEntry();
+}
+
+function updateCurrentDocumentHistory(update: (entry: RenderHistoryEntry) => RenderHistoryEntry): void {
+  const entry = ensureCurrentDocumentHistory();
+  if (!entry) {
+    return;
+  }
+  historyEntries = historyEntries.map((candidate) => candidate.id === entry.id ? update(candidate) : candidate);
+  persistHistoryEntries();
+  renderHistoryList();
+}
+
+function renameHistoryProject(id: string, nameInput: string): void {
+  const name = normalizedLibraryName(nameInput);
+  if (!name) {
+    renderStatus.textContent = "请输入项目名称";
+    historyProjectNameInput.focus();
+    return;
+  }
+  if (historyProjects.some((project) => project.id !== id && libraryNameKey(project.name) === libraryNameKey(name))) {
+    renderStatus.textContent = "已存在同名科研项目";
+    return;
+  }
+  historyProjects = historyProjects.map((project) => project.id === id ? { ...project, name } : project);
+  persistHistoryEntries();
+  setHistoryProjectCreateOpen(false);
+  renderHistoryList();
+  renderStatus.textContent = `已重命名为“${name}”`;
+}
+
+function requestDeleteHistoryProject(id: string): void {
+  if (pendingHistoryProjectDeleteId !== id) {
+    pendingHistoryProjectDeleteId = id;
+    renderHistoryList();
+    renderStatus.textContent = "再次点击“确认”删除项目；其中的历史会移回收件箱";
+    return;
+  }
+  const project = historyProjects.find((candidate) => candidate.id === id);
+  historyProjects = historyProjects.filter((candidate) => candidate.id !== id);
+  historyEntries = historyEntries.map((entry) => entry.projectId === id ? { ...entry, projectId: null } : entry);
+  if (historyScope === id) {
+    historyScope = "inbox";
+  }
+  pendingHistoryProjectDeleteId = null;
+  persistHistoryEntries();
+  renderHistoryList();
+  renderStatus.textContent = project ? `已删除项目“${project.name}”，历史已移回收件箱` : "项目已删除";
+}
+
+function applySelectedProject(): void {
+  if (selectedHistoryIds.size === 0) {
+    return;
+  }
+  const projectId = historySelectionProject.value || null;
+  historyEntries = historyEntries.map((entry) =>
+    selectedHistoryIds.has(entry.id) ? { ...entry, projectId } : entry,
+  );
+  persistHistoryEntries();
+  renderHistoryList();
+  const project = projectId ? historyProjects.find((candidate) => candidate.id === projectId) : undefined;
+  renderStatus.textContent = project ? `已移动到“${project.name}”` : "已移回收件箱";
+}
+
+function tagIdsFromInput(value: string): string[] {
+  const names = Array.from(new Set(
+    value.split(/[，,]/).map(normalizedLibraryName).filter(Boolean),
+  ));
+  const ids: string[] = [];
+  for (const name of names) {
+    let tag = historyTags.find((candidate) => libraryNameKey(candidate.name) === libraryNameKey(name));
+    if (!tag) {
+      tag = { id: `tag-${createHistoryId()}`, name, createdAt: Date.now() };
+      historyTags = [...historyTags, tag];
+    }
+    ids.push(tag.id);
+  }
+  return ids;
+}
+
+function applySelectedTags(): void {
+  if (selectedHistoryIds.size === 0) {
+    return;
+  }
+  const tagIds = tagIdsFromInput(historyTagInput.value);
+  if (tagIds.length === 0) {
+    renderStatus.textContent = "请输入至少一个标签";
+    historyTagInput.focus();
+    return;
+  }
+  historyEntries = historyEntries.map((entry) =>
+    selectedHistoryIds.has(entry.id)
+      ? { ...entry, tagIds: Array.from(new Set([...entry.tagIds, ...tagIds])) }
+      : entry,
+  );
+  historyTagInput.value = "";
+  persistHistoryEntries();
+  renderHistoryList();
+  renderStatus.textContent = "已添加标签";
 }
 
 function updateRepairPanel(result: RecoveryResult): void {
@@ -831,6 +1243,7 @@ async function updateRendering(): Promise<void> {
     preview.innerHTML = emptyPreview();
     rebuildOutline();
     refreshDocumentSearch();
+    renderDocumentArchive();
     backToTopButton.hidden = true;
     renderStatus.textContent = "等待输入";
     return;
@@ -1105,6 +1518,7 @@ sourceInput.addEventListener("paste", () => {
   persistCurrentHistoryScroll();
   startNewHistorySession();
   pendingHistoryScrollTop = 0;
+  setMode("preview");
   window.setTimeout(scheduleRendering);
 });
 
@@ -1114,7 +1528,7 @@ requiredElement<HTMLButtonElement>("#paste-clipboard").addEventListener("click",
     startNewHistorySession();
     sourceInput.value = await clipboardText();
     pendingHistoryScrollTop = 0;
-    setMode("split");
+    setMode("preview");
     await updateRendering();
   } catch {
     sourceInput.focus();
@@ -1127,7 +1541,7 @@ requiredElement<HTMLButtonElement>("#load-demo").addEventListener("click", async
   startNewHistorySession();
   sourceInput.value = DEMO_TEXT;
   pendingHistoryScrollTop = 0;
-  setMode("split");
+  setMode("preview");
   await updateRendering();
 });
 
@@ -1159,6 +1573,50 @@ exportMenu.addEventListener("click", (event) => {
     event.preventDefault();
     void handleDocumentExport(button.dataset.documentExport);
   }
+});
+documentProjectSelect.addEventListener("change", () => {
+  const projectId = documentProjectSelect.value || null;
+  updateCurrentDocumentHistory((entry) => ({ ...entry, projectId }));
+  const project = projectId ? historyProjects.find((candidate) => candidate.id === projectId) : undefined;
+  renderStatus.textContent = project ? `已归入“${project.name}”` : "已移回收件箱";
+});
+documentNewProjectButton.addEventListener("click", () => {
+  documentProjectCreateForm.hidden = !documentProjectCreateForm.hidden;
+  if (!documentProjectCreateForm.hidden) {
+    documentProjectNameInput.focus();
+  }
+});
+documentProjectCreateForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const project = createHistoryProject(documentProjectNameInput.value, false);
+  if (!project) {
+    return;
+  }
+  documentProjectNameInput.value = "";
+  documentProjectCreateForm.hidden = true;
+  updateCurrentDocumentHistory((entry) => ({ ...entry, projectId: project.id }));
+  renderStatus.textContent = `已创建并归入“${project.name}”`;
+});
+documentTagForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const tagIds = tagIdsFromInput(documentTagInput.value);
+  if (tagIds.length === 0) {
+    renderStatus.textContent = "请输入至少一个标签";
+    documentTagInput.focus();
+    return;
+  }
+  updateCurrentDocumentHistory((entry) => ({ ...entry, tagIds: Array.from(new Set([...entry.tagIds, ...tagIds])) }));
+  documentTagInput.value = "";
+  renderStatus.textContent = "已添加标签";
+});
+documentTagList.addEventListener("click", (event) => {
+  const remove = (event.target as Element).closest<HTMLButtonElement>("[data-remove-document-tag-id]");
+  const tagId = remove?.dataset.removeDocumentTagId;
+  if (!tagId) {
+    return;
+  }
+  updateCurrentDocumentHistory((entry) => ({ ...entry, tagIds: entry.tagIds.filter((id) => id !== tagId) }));
+  renderStatus.textContent = "已移除标签";
 });
 
 documentSearchButton.addEventListener("click", () => setDocumentSearchOpen(!documentSearchOpen));
@@ -1280,6 +1738,73 @@ document.addEventListener("pointerdown", (event) => {
   }
 });
 
+document.querySelectorAll<HTMLButtonElement>("[data-history-filter]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const filter = button.dataset.historyFilter;
+    if (filter !== "all" && filter !== "inbox" && filter !== "pinned") {
+      return;
+    }
+    historyScope = filter;
+    renderHistoryList();
+  });
+});
+newHistoryProjectButton.addEventListener("click", () => setHistoryProjectCreateOpen(true));
+cancelHistoryProjectButton.addEventListener("click", () => setHistoryProjectCreateOpen(false));
+historyProjectCreateForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (editingHistoryProjectId) {
+    renameHistoryProject(editingHistoryProjectId, historyProjectNameInput.value);
+  } else {
+    createHistoryProject(historyProjectNameInput.value);
+  }
+});
+historyProjectList.addEventListener("click", (event) => {
+  const renameButton = (event.target as Element).closest<HTMLButtonElement>("[data-rename-history-project-id]");
+  const deleteButton = (event.target as Element).closest<HTMLButtonElement>("[data-delete-history-project-id]");
+  if (renameButton?.dataset.renameHistoryProjectId) {
+    const project = historyProjects.find((candidate) => candidate.id === renameButton.dataset.renameHistoryProjectId);
+    if (project) {
+      pendingHistoryProjectDeleteId = null;
+      setHistoryProjectCreateOpen(true, project);
+    }
+    return;
+  }
+  if (deleteButton?.dataset.deleteHistoryProjectId) {
+    requestDeleteHistoryProject(deleteButton.dataset.deleteHistoryProjectId);
+    return;
+  }
+  const projectButton = (event.target as Element).closest<HTMLButtonElement>("[data-history-project-id]");
+  const projectId = projectButton?.dataset.historyProjectId;
+  if (!projectId) {
+    return;
+  }
+  historyScope = projectId;
+  renderHistoryList();
+});
+historyTagList.addEventListener("click", (event) => {
+  const tagButton = (event.target as Element).closest<HTMLButtonElement>("[data-history-tag-id]");
+  const tagId = tagButton?.dataset.historyTagId;
+  if (!tagId) {
+    return;
+  }
+  if (activeHistoryTagIds.has(tagId)) {
+    activeHistoryTagIds.delete(tagId);
+  } else {
+    activeHistoryTagIds.add(tagId);
+  }
+  renderHistoryList();
+});
+clearHistoryTagFilterButton.addEventListener("click", () => {
+  activeHistoryTagIds.clear();
+  renderHistoryList();
+});
+clearHistorySelectionButton.addEventListener("click", () => {
+  selectedHistoryIds.clear();
+  renderHistoryList();
+});
+applyHistoryProjectButton.addEventListener("click", applySelectedProject);
+applyHistoryTagsButton.addEventListener("click", applySelectedTags);
+
 historyButton.addEventListener("click", () => setHistoryOpen(!historyOpen));
 historyCloseButton.addEventListener("click", () => setHistoryOpen(false));
 historyBackdrop.addEventListener("click", () => setHistoryOpen(false));
@@ -1301,6 +1826,20 @@ historyList.addEventListener("click", (event) => {
   if (openButton?.dataset.historyId) {
     void openHistoryEntry(openButton.dataset.historyId);
   }
+});
+
+historyList.addEventListener("change", (event) => {
+  const selection = (event.target as Element).closest<HTMLInputElement>("[data-history-selection-id]");
+  const id = selection?.dataset.historySelectionId;
+  if (!selection || !id) {
+    return;
+  }
+  if (selection.checked) {
+    selectedHistoryIds.add(id);
+  } else {
+    selectedHistoryIds.delete(id);
+  }
+  renderHistoryList();
 });
 
 historySearchInput.addEventListener("input", renderHistoryList);
@@ -1337,6 +1876,7 @@ historyClearButton.addEventListener("click", () => {
     return;
   }
   historyEntries = [];
+  selectedHistoryIds.clear();
   historySearchInput.value = "";
   currentHistoryId = null;
   viewingHistoryEntry = sourceInput.value.trim().length > 0;
@@ -1590,4 +2130,6 @@ if ("__TAURI_INTERNALS__" in window) {
 }
 
 renderHistoryList();
-void updateRendering();
+void initializeHistoryWorkspace().finally(() => {
+  void updateRendering();
+});

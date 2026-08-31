@@ -131,10 +131,39 @@
         <div class="history-sidebar-header">
           <div>
             <h2>渲染历史</h2>
-            <p>仅保存在本机</p>
+            <p>本机项目库</p>
           </div>
           <button id="close-history" class="icon-button" type="button" title="关闭历史" aria-label="关闭历史">×</button>
         </div>
+        <section class="history-library" aria-label="项目和标签筛选">
+          <div class="history-filter-tabs" role="group" aria-label="历史范围">
+            <button type="button" data-history-filter="all" class="active">全部</button>
+            <button type="button" data-history-filter="inbox">收件箱</button>
+            <button type="button" data-history-filter="pinned">置顶</button>
+          </div>
+          <div class="history-library-heading">
+            <span>科研项目</span>
+            <button id="new-history-project" type="button">＋ 新建</button>
+          </div>
+          <form id="history-project-create-form" class="history-project-create-form" hidden>
+            <input
+              id="history-project-name"
+              type="text"
+              maxlength="80"
+              autocomplete="off"
+              placeholder="输入项目名称"
+              aria-label="项目名称"
+            />
+            <button id="save-history-project" type="submit">创建</button>
+            <button id="cancel-history-project" type="button">取消</button>
+          </form>
+          <div id="history-project-list" class="history-project-list"></div>
+          <div class="history-library-heading history-tag-heading">
+            <span>标签</span>
+            <button id="clear-history-tag-filter" type="button" hidden>清除</button>
+          </div>
+          <div id="history-tag-list" class="history-tag-list"></div>
+        </section>
         <label class="history-search" for="history-search-input">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="11" cy="11" r="6" />
@@ -142,6 +171,20 @@
           </svg>
           <input id="history-search-input" type="search" autocomplete="off" placeholder="搜索历史…" />
         </label>
+        <section id="history-bulk-actions" class="history-bulk-actions" aria-label="批量归类" hidden>
+          <div class="history-bulk-header">
+            <strong id="history-selection-count">已选 0 条</strong>
+            <button id="clear-history-selection" type="button">取消选择</button>
+          </div>
+          <div class="history-bulk-row">
+            <select id="history-selection-project" aria-label="移动到项目"></select>
+            <button id="apply-history-project" type="button">移动</button>
+          </div>
+          <div class="history-bulk-row">
+            <input id="history-tag-input" type="text" maxlength="120" placeholder="标签，用逗号分隔" />
+            <button id="apply-history-tags" type="button">加标签</button>
+          </div>
+        </section>
         <div class="history-content">
           <div id="history-list" class="history-list"></div>
           <div id="history-empty" class="history-empty">
@@ -170,8 +213,8 @@
           <button id="clear-source" class="secondary-button" type="button">清空</button>
         </div>
         <div class="view-switcher" role="group" aria-label="视图模式">
-          <button type="button" data-mode="preview">预览</button>
-          <button type="button" data-mode="split" class="active">对照</button>
+          <button type="button" data-mode="preview" class="active">预览</button>
+          <button type="button" data-mode="split">对照</button>
         </div>
         <div class="toolbar-group toolbar-group-right">
           <button id="copy-markdown" class="secondary-button" type="button">复制 Markdown</button>
@@ -183,10 +226,35 @@
               <button type="button" data-document-export="html" role="menuitem">独立 HTML</button>
             </div>
           </details>
+          <details id="document-archive" class="document-archive">
+            <summary>归档</summary>
+            <div class="document-archive-popover">
+              <label class="document-archive-project" for="document-project-select">
+                <span>科研项目</span>
+                <select id="document-project-select" aria-label="当前文档所属项目"></select>
+              </label>
+              <div class="document-archive-create">
+                <button id="document-new-project" type="button">＋ 新建项目</button>
+                <form id="document-project-create-form" hidden>
+                  <input id="document-project-name" type="text" maxlength="80" autocomplete="off" placeholder="项目名称" />
+                  <button type="submit">创建</button>
+                </form>
+              </div>
+              <div class="document-archive-tags">
+                <span>标签</span>
+                <div id="document-tag-list" class="document-tag-list"></div>
+                <form id="document-tag-form" class="document-tag-form">
+                  <input id="document-tag-input" type="text" maxlength="120" autocomplete="off" placeholder="输入标签，逗号分隔" />
+                  <button type="submit">添加</button>
+                </form>
+              </div>
+              <p id="document-archive-hint">归档会保存在本机历史中</p>
+            </div>
+          </details>
         </div>
       </nav>
 
-      <main id="workspace" class="workspace" data-mode="split">
+      <main id="workspace" class="workspace" data-mode="preview">
         <section class="editor-pane" aria-label="原始文本">
           <div class="pane-heading">
             <span>原始文本</span>

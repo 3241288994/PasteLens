@@ -1,3 +1,5 @@
+mod history_store;
+
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Position, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -169,7 +171,9 @@ pub fn run() {
             hide_viewer,
             set_viewer_pinned,
             print_viewer,
-            quit_app
+            quit_app,
+            history_store::load_history_workspace,
+            history_store::save_history_workspace
         ])
         .run(tauri::generate_context!())
         .expect("error while running PasteLens");

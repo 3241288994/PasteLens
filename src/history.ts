@@ -1,5 +1,3 @@
-export const HISTORY_LIMIT = 30;
-
 export interface RenderHistoryEntry {
   id: string;
   source: string;
@@ -8,11 +6,40 @@ export interface RenderHistoryEntry {
   updatedAt: number;
   pinned: boolean;
   scrollTop: number;
+  projectId: string | null;
+  tagIds: string[];
 }
 
 export interface HistoryEntryState {
   pinned?: boolean;
   scrollTop?: number;
+  projectId?: string | null;
+  tagIds?: string[];
+}
+
+export interface HistoryProject {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: number;
+}
+
+export interface HistoryTag {
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
+export interface HistoryWorkspace {
+  entries: RenderHistoryEntry[];
+  projects: HistoryProject[];
+  tags: HistoryTag[];
+}
+
+export interface HistoryFilter {
+  projectId?: string | null;
+  pinnedOnly?: boolean;
+  tagIds?: Iterable<string>;
 }
 
 function compactText(value: string): string {
@@ -25,6 +52,15 @@ function trimTo(value: string, length: number): string {
 
 function normalizedSearchText(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function uniqueIds(values: unknown): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return Array.from(new Set(values.filter((value): value is string =>
+    typeof value === "string" && value.trim().length > 0,
+  )));
 }
 
 function containsSubsequence(value: string, query: string): boolean {
@@ -52,13 +88,24 @@ export function sortHistoryEntries(entries: RenderHistoryEntry[]): RenderHistory
 export function filterHistoryEntries(
   entries: RenderHistoryEntry[],
   query: string,
+  filter: HistoryFilter = {},
 ): RenderHistoryEntry[] {
   const terms = normalizedSearchText(query).split(" ").filter(Boolean);
-  if (terms.length === 0) {
-    return sortHistoryEntries(entries);
-  }
+  const tagIds = Array.from(filter.tagIds ?? []);
 
   return sortHistoryEntries(entries).filter((entry) => {
+    if (filter.projectId !== undefined && entry.projectId !== filter.projectId) {
+      return false;
+    }
+    if (filter.pinnedOnly && !entry.pinned) {
+      return false;
+    }
+    if (tagIds.some((tagId) => !entry.tagIds.includes(tagId))) {
+      return false;
+    }
+    if (terms.length === 0) {
+      return true;
+    }
     const haystack = normalizedSearchText(`${entry.title}\n${entry.summary}\n${entry.source}`);
     const compactHaystack = haystack.replace(/\s+/g, "");
     return terms.every((term) => {
@@ -93,6 +140,8 @@ export function createHistoryEntry(
     updatedAt,
     pinned: state.pinned ?? false,
     scrollTop: Math.max(0, state.scrollTop ?? 0),
+    projectId: state.projectId?.trim() || null,
+    tagIds: uniqueIds(state.tagIds),
   };
 }
 
@@ -108,7 +157,7 @@ export function parseHistoryEntries(raw: string | null): RenderHistoryEntry[] {
     }
 
     const entries = parsed
-      .filter((entry): entry is Omit<RenderHistoryEntry, "pinned" | "scrollTop"> & Partial<RenderHistoryEntry> => {
+      .filter((entry): entry is Omit<RenderHistoryEntry, "pinned" | "scrollTop" | "projectId" | "tagIds"> & Partial<RenderHistoryEntry> => {
         if (!entry || typeof entry !== "object") {
           return false;
         }
@@ -130,11 +179,58 @@ export function parseHistoryEntries(raw: string | null): RenderHistoryEntry[] {
           typeof entry.scrollTop === "number" && Number.isFinite(entry.scrollTop)
             ? Math.max(0, entry.scrollTop)
             : 0,
+        projectId: typeof entry.projectId === "string" && entry.projectId.trim()
+          ? entry.projectId
+          : null,
+        tagIds: uniqueIds(entry.tagIds),
       }));
-    return sortHistoryEntries(entries).slice(0, HISTORY_LIMIT);
+    return sortHistoryEntries(entries);
   } catch {
     return [];
   }
+}
+
+export function parseHistoryWorkspace(value: unknown): HistoryWorkspace | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Partial<HistoryWorkspace>;
+  if (!Array.isArray(candidate.entries) || !Array.isArray(candidate.projects) || !Array.isArray(candidate.tags)) {
+    return null;
+  }
+
+  const projects = candidate.projects.filter((project): project is HistoryProject => Boolean(
+    project
+      && typeof project.id === "string"
+      && project.id.trim()
+      && typeof project.name === "string"
+      && project.name.trim()
+      && typeof project.color === "string"
+      && typeof project.createdAt === "number"
+      && Number.isFinite(project.createdAt),
+  ));
+  const tags = candidate.tags.filter((tag): tag is HistoryTag => Boolean(
+    tag
+      && typeof tag.id === "string"
+      && tag.id.trim()
+      && typeof tag.name === "string"
+      && tag.name.trim()
+      && typeof tag.createdAt === "number"
+      && Number.isFinite(tag.createdAt),
+  ));
+  const entries = parseHistoryEntries(JSON.stringify(candidate.entries));
+  const projectIds = new Set(projects.map((project) => project.id));
+  const tagIds = new Set(tags.map((tag) => tag.id));
+
+  return {
+    projects,
+    tags,
+    entries: entries.map((entry) => ({
+      ...entry,
+      projectId: entry.projectId && projectIds.has(entry.projectId) ? entry.projectId : null,
+      tagIds: entry.tagIds.filter((tagId) => tagIds.has(tagId)),
+    })),
+  };
 }
 
 export function upsertHistoryEntry(
@@ -144,5 +240,5 @@ export function upsertHistoryEntry(
   const remaining = entries.filter(
     (candidate) => candidate.id !== entry.id && candidate.source !== entry.source,
   );
-  return sortHistoryEntries([entry, ...remaining]).slice(0, HISTORY_LIMIT);
+  return sortHistoryEntries([entry, ...remaining]);
 }

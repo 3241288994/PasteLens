@@ -16,4 +16,13 @@ if [ ! -t 1 ] && [ -z "${CI:-}" ]; then
   export CI=true
 fi
 
-exec pnpm tauri "$@"
+if command -v pnpm >/dev/null 2>&1; then
+  pnpm_command="pnpm"
+elif command -v corepack >/dev/null 2>&1; then
+  pnpm_command="corepack pnpm"
+else
+  echo "pnpm or corepack is required to run Tauri" >&2
+  exit 1
+fi
+
+exec $pnpm_command tauri "$@"
