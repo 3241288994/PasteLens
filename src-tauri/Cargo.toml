@@ -1,6 +1,6 @@
 [package]
 name = "pastelens"
-version = "0.2.0"
+version = "0.4.1"
 description = "A local-first renderer for copied AI and terminal output"
 authors = ["PasteLens contributors"]
 edition = "2021"
@@ -13,8 +13,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+base64 = "0.22"
+png = "0.18"
+sha2 = "0.10"
+tempfile = "3"
+libc = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
@@ -22,3 +28,6 @@ tauri-plugin-fs = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }

@@ -3,6 +3,8 @@ import { Menu } from "@tauri-apps/api/menu";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./ball.css";
 import { createDeferredQuitController } from "./context-menu-quit";
+import { watchUpload } from "./image-upload-client";
+import { isUploadBusy, shortcutKeys, uploadMessage } from "./image-upload-model";
 
 const ball = document.querySelector<HTMLButtonElement>("#floating-ball");
 if (!ball) {
@@ -10,6 +12,11 @@ if (!ball) {
 }
 
 const currentWindow = getCurrentWindow();
+void watchUpload((snapshot) => {
+  ball.dataset.uploadPhase = snapshot.status.phase;
+  ball.classList.toggle("upload-busy", isUploadBusy(snapshot.status.phase));
+  ball.title = `PasteLens · ${uploadMessage(snapshot.status).title}\n上传快捷键 ${shortcutKeys(snapshot.settings.shortcut, /Mac/i.test(navigator.platform)).join(" ")}`;
+});
 let pointerStart: { x: number; y: number } | null = null;
 let dragging = false;
 let contextMenuPromise: Promise<Menu> | null = null;
@@ -32,6 +39,9 @@ function contextMenu(): Promise<Menu> {
           text: "打开 / 隐藏阅读窗口",
           action: () => void toggleViewer(),
         },
+        { item: "Separator" },
+        { id: "upload-image", text: "上传剪贴板图片", action: () => { void invoke("start_image_upload", { retry: false }); } },
+        { id: "upload-settings", text: "图片快传与快捷键设置…", action: () => { void invoke("open_image_upload_settings"); } },
         { item: "Separator" },
         {
           id: "quit-app",

@@ -16,6 +16,7 @@ export default defineConfig({
       input: {
         viewer: "index.html",
         ball: "ball.html",
+        upload: "upload.html",
       },
     },
   },

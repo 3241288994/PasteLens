@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use tauri::{AppHandle, Manager};
 
@@ -43,15 +43,34 @@ pub struct HistoryWorkspace {
     pub tags: Vec<HistoryTag>,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftEntry {
+    pub id: String,
+    pub title: String,
+    pub content: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 fn database(app: &AppHandle) -> Result<Connection, String> {
-    let data_dir = app.path().app_data_dir().map_err(|error| error.to_string())?;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
     fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
-    let connection = Connection::open(data_dir.join("history.sqlite3")).map_err(|error| error.to_string())?;
+    let connection =
+        Connection::open(data_dir.join("history.sqlite3")).map_err(|error| error.to_string())?;
     connection
         .execute_batch(
             "
             PRAGMA foreign_keys = ON;
             PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
+            PRAGMA wal_autocheckpoint = 256;
+            PRAGMA journal_size_limit = 16777216;
+            PRAGMA max_page_count = 196608;
             CREATE TABLE IF NOT EXISTS history_meta (
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
@@ -86,10 +105,94 @@ fn database(app: &AppHandle) -> Result<Connection, String> {
               ON history_entries(pinned DESC, updated_at DESC);
             CREATE INDEX IF NOT EXISTS history_entry_tags_tag_id_idx
               ON history_entry_tags(tag_id);
+            CREATE TABLE IF NOT EXISTS drafts (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              content TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS drafts_updated_at_idx
+              ON drafts(updated_at DESC);
             ",
         )
         .map_err(|error| error.to_string())?;
     Ok(connection)
+}
+
+#[tauri::command]
+pub fn load_drafts(app: AppHandle) -> Result<Vec<DraftEntry>, String> {
+    let connection = database(&app)?;
+    let mut statement = connection
+        .prepare("SELECT id, title, content, created_at, updated_at FROM drafts ORDER BY updated_at DESC")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(DraftEntry {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                content: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+    rows.map(|row| row.map_err(|error| error.to_string()))
+        .collect()
+}
+
+#[tauri::command]
+pub fn save_drafts(app: AppHandle, drafts: Vec<DraftEntry>) -> Result<(), String> {
+    let mut connection = database(&app)?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let desired_ids: HashSet<&str> = drafts.iter().map(|draft| draft.id.as_str()).collect();
+    let existing_ids = {
+        let mut statement = transaction
+            .prepare("SELECT id FROM drafts")
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+    };
+    for id in existing_ids {
+        if !desired_ids.contains(id.as_str()) {
+            transaction
+                .execute("DELETE FROM drafts WHERE id = ?1", params![id])
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    for draft in &drafts {
+        transaction
+            .execute(
+                "INSERT INTO drafts (id, title, content, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET
+                   title = excluded.title,
+                   content = excluded.content,
+                   created_at = excluded.created_at,
+                   updated_at = excluded.updated_at
+                 WHERE title IS NOT excluded.title
+                    OR content IS NOT excluded.content
+                    OR created_at IS NOT excluded.created_at
+                    OR updated_at IS NOT excluded.updated_at",
+                params![
+                    draft.id,
+                    draft.title,
+                    draft.content,
+                    draft.created_at,
+                    draft.updated_at
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    transaction.commit().map_err(|error| error.to_string())?;
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(PASSIVE);")
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -147,7 +250,9 @@ pub fn load_history_workspace(app: AppHandle) -> Result<Option<HistoryWorkspace>
         .prepare("SELECT entry_id, tag_id FROM history_entry_tags ORDER BY tag_id ASC")
         .map_err(|error| error.to_string())?;
     let entry_tag_rows = entry_tag_statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(|error| error.to_string())?;
     for entry_tag in entry_tag_rows {
         let (entry_id, tag_id) = entry_tag.map_err(|error| error.to_string())?;
@@ -184,13 +289,19 @@ pub fn load_history_workspace(app: AppHandle) -> Result<Option<HistoryWorkspace>
         entries.push(entry.map_err(|error| error.to_string())?);
     }
 
-    Ok(Some(HistoryWorkspace { entries, projects, tags }))
+    Ok(Some(HistoryWorkspace {
+        entries,
+        projects,
+        tags,
+    }))
 }
 
 #[tauri::command]
 pub fn save_history_workspace(app: AppHandle, workspace: HistoryWorkspace) -> Result<(), String> {
     let mut connection = database(&app)?;
-    let transaction = connection.transaction().map_err(|error| error.to_string())?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
     transaction
         .execute_batch(
             "
@@ -254,5 +365,25 @@ pub fn save_history_workspace(app: AppHandle, workspace: HistoryWorkspace) -> Re
             [],
         )
         .map_err(|error| error.to_string())?;
-    transaction.commit().map_err(|error| error.to_string())
+    transaction.commit().map_err(|error| error.to_string())?;
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(PASSIVE);")
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn update_history_scroll(app: AppHandle, id: String, scroll_top: f64) -> Result<(), String> {
+    if !scroll_top.is_finite() {
+        return Err("scroll position must be finite".to_string());
+    }
+    let connection = database(&app)?;
+    connection
+        .execute(
+            "UPDATE history_entries SET scroll_top = ?1 WHERE id = ?2 AND scroll_top IS NOT ?1",
+            params![scroll_top.max(0.0), id],
+        )
+        .map_err(|error| error.to_string())?;
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(PASSIVE);")
+        .map_err(|error| error.to_string())
 }

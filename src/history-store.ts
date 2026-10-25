@@ -18,3 +18,10 @@ export async function saveNativeHistoryWorkspace(workspace: HistoryWorkspace): P
   }
   await invoke("save_history_workspace", { workspace });
 }
+
+export async function updateNativeHistoryScroll(id: string, scrollTop: number): Promise<void> {
+  if (!hasNativeHistoryStore()) {
+    return;
+  }
+  await invoke("update_history_scroll", { id, scrollTop });
+}

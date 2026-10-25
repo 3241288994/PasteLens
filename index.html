@@ -7,7 +7,7 @@
     <title>PasteLens</title>
   </head>
   <body>
-    <div class="app-shell">
+    <div id="app-shell" class="app-shell" data-workspace-mode="reader">
       <header class="titlebar" data-tauri-drag-region>
         <div class="brand" data-tauri-drag-region>
           <span class="brand-mark">∑</span>
@@ -17,6 +17,11 @@
           </div>
         </div>
         <div class="window-actions">
+          <div class="workspace-mode-switcher" role="group" aria-label="工作区">
+            <button id="show-reader-workspace" type="button" class="active">阅读</button>
+            <button id="show-draft-workspace" type="button">草稿本</button>
+          </div>
+          <button id="open-image-upload" class="upload-launch" type="button" aria-haspopup="dialog" aria-controls="image-upload-panel">图片快传 <kbd>⌃</kbd><kbd>⌥</kbd><kbd>V</kbd></button>
           <button
             id="toggle-history"
             class="icon-button history-button"
@@ -64,6 +69,50 @@
           <button id="hide-window" class="icon-button" type="button" title="隐藏窗口" aria-label="隐藏窗口">×</button>
         </div>
       </header>
+
+      <main id="draftbook" class="draftbook" aria-label="草稿本" hidden>
+        <aside class="draft-sidebar" aria-label="草稿列表">
+          <div class="draft-sidebar-heading">
+            <div>
+              <h2>草稿本</h2>
+              <p>仅保存在本机</p>
+            </div>
+            <button id="new-draft" type="button" title="新建草稿" aria-label="新建草稿">＋</button>
+          </div>
+          <div id="draft-list" class="draft-list"></div>
+        </aside>
+        <section class="draft-editor-pane" aria-label="草稿编辑器">
+          <div class="draft-editor-heading">
+            <input id="draft-title" type="text" maxlength="120" autocomplete="off" placeholder="草稿标题" aria-label="草稿标题" />
+            <div>
+              <span id="draft-save-status">自动保存</span>
+              <button id="delete-draft" type="button">删除</button>
+            </div>
+          </div>
+          <div id="draft-content" class="draft-content" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="记录此刻的想法……"></div>
+        </section>
+      </main>
+
+      <dialog id="image-upload-panel" class="image-upload-panel" aria-labelledby="upload-panel-title">
+        <header class="upload-panel-header">
+          <div><span class="upload-eyebrow">PASTELENS / QUICK SEND</span><h2 id="upload-panel-title">图片快传</h2><p>不离开终端，把图片送到服务器。</p></div>
+          <button id="upload-panel-close" type="button" class="upload-dismiss" aria-label="关闭图片快传">×</button>
+        </header>
+        <section class="upload-shortcut-card" aria-label="上传快捷键">
+          <div><strong>一个快捷键，接着聊</strong><p>先复制图片，再按快捷键上传。无需切换窗口。</p></div>
+          <div class="upload-shortcut-controls"><button id="upload-shortcut-record" type="button" aria-label="录制上传快捷键" title="点击后按下新的快捷键"></button><button id="upload-shortcut-reset" type="button">恢复默认</button></div>
+          <span class="upload-shortcut-caption">点击键帽修改 · 至少两个修饰键 · Esc 取消录制</span>
+        </section>
+        <div id="upload-shortcut-error" class="upload-alert" role="alert" hidden></div>
+        <section class="upload-settings-grid" aria-label="图片接收设置">
+          <label>目标服务器<span class="upload-field-note">复用 ~/.ssh/config 与已有密钥</span><input id="upload-host" type="text" placeholder="GPU-Server-Codex" autocomplete="off" spellcheck="false"></label>
+          <label>服务器接收目录<span class="upload-field-note">推荐选择当前项目内的 attachments 目录</span><input id="upload-directory" type="text" placeholder="~/attachments" autocomplete="off" spellcheck="false"></label>
+        </section>
+        <div class="upload-config-actions"><span class="upload-security-note">SSH / SFTP · 不开公网端口</span><div><button id="upload-check" type="button">检查连接</button><button id="upload-save" class="upload-save" type="button">保存并启用</button></div></div>
+        <p id="upload-form-hint" class="upload-form-hint" role="status" aria-live="polite"></p>
+        <section id="upload-panel-status" class="upload-panel-status" aria-label="本次上传" hidden></section>
+        <footer class="upload-panel-footer"><button id="upload-now" class="upload-primary" type="button">上传剪贴板图片</button><p>成功后回到原对话粘贴 · 不自动发送消息<br>Mac 截图到剪贴板：⌃ ⇧ ⌘ 4</p></footer>
+      </dialog>
 
       <section id="settings-popover" class="settings-popover" aria-label="设置" hidden>
         <div class="settings-popover-header">
@@ -137,12 +186,24 @@
         </div>
         <section class="history-library" aria-label="项目和标签筛选">
           <div class="history-filter-tabs" role="group" aria-label="历史范围">
-            <button type="button" data-history-filter="all" class="active">全部</button>
-            <button type="button" data-history-filter="inbox">收件箱</button>
-            <button type="button" data-history-filter="pinned">置顶</button>
+            <button type="button" data-history-filter="all" class="active">
+              <span>全部</span>
+              <small data-history-filter-count="all">0</small>
+            </button>
+            <button type="button" data-history-filter="inbox">
+              <span>收件箱</span>
+              <small data-history-filter-count="inbox">0</small>
+            </button>
+            <button type="button" data-history-filter="pinned">
+              <span>置顶</span>
+              <small data-history-filter-count="pinned">0</small>
+            </button>
           </div>
           <div class="history-library-heading">
-            <span>科研项目</span>
+            <button id="toggle-history-projects" class="history-projects-toggle" type="button" aria-expanded="false">
+              <span>科研项目</span>
+              <span aria-hidden="true">›</span>
+            </button>
             <button id="new-history-project" type="button">＋ 新建</button>
           </div>
           <form id="history-project-create-form" class="history-project-create-form" hidden>
@@ -157,7 +218,7 @@
             <button id="save-history-project" type="submit">创建</button>
             <button id="cancel-history-project" type="button">取消</button>
           </form>
-          <div id="history-project-list" class="history-project-list"></div>
+          <div id="history-project-list" class="history-project-list" hidden></div>
           <div class="history-library-heading history-tag-heading">
             <span>标签</span>
             <button id="clear-history-tag-filter" type="button" hidden>清除</button>
@@ -215,6 +276,7 @@
         <div class="view-switcher" role="group" aria-label="视图模式">
           <button type="button" data-mode="preview" class="active">预览</button>
           <button type="button" data-mode="split">对照</button>
+          <button type="button" data-mode="edit">修改</button>
         </div>
         <div class="toolbar-group toolbar-group-right">
           <button id="copy-markdown" class="secondary-button" type="button">复制 Markdown</button>
@@ -311,6 +373,22 @@
             <p id="document-outline-empty" class="document-outline-empty">当前内容没有标题</p>
           </nav>
           <button id="back-to-top" class="back-to-top" type="button" title="返回顶部" aria-label="返回顶部" hidden>↑</button>
+        </section>
+
+        <section class="result-edit-pane" aria-label="修改渲染结果">
+          <div class="pane-heading">
+            <span>修改渲染结果</span>
+            <div class="result-edit-actions">
+              <span id="result-edit-count">0 字符</span>
+              <button id="cancel-result-edit" type="button">取消</button>
+              <button id="apply-result-edit" type="button">应用修改</button>
+            </div>
+          </div>
+          <textarea
+            id="result-editor"
+            spellcheck="false"
+            placeholder="渲染后的 Markdown 会显示在这里，可直接修改……"
+          ></textarea>
         </section>
 
       </main>

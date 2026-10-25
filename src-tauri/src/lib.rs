@@ -1,7 +1,8 @@
+mod image_upload;
 mod history_store;
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Position, WindowEvent};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 fn show_viewer(app: &AppHandle) -> Result<(), String> {
     let viewer = app
@@ -87,6 +88,9 @@ fn toggle_viewer(app: AppHandle) -> Result<(), String> {
         .get_webview_window("viewer")
         .ok_or_else(|| "viewer window is unavailable".to_string())?;
 
+    // The floating ball can briefly alter macOS focus before this command runs,
+    // so focus is not a stable signal for deciding whether to hide. Treat the
+    // ball as a strict visibility toggle: one click shows, the next hides.
     if viewer.is_visible().map_err(|error| error.to_string())? {
         viewer.hide().map_err(|error| error.to_string())?;
         return Ok(());
@@ -138,15 +142,17 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
+                .with_handler(|app, shortcut, event| {
+                    let reader = Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::Space);
+                    if shortcut.id() == reader.id() && event.state() == ShortcutState::Pressed {
                         let _ = toggle_viewer(app.clone());
                     }
                 })
                 .build(),
         )
         .setup(|app| {
-            let _ = app.global_shortcut().register("Alt+Shift+Space");
+            app.global_shortcut().register("Alt+Shift+Space")?;
+            image_upload::initialize(app.handle()).map_err(std::io::Error::other)?;
 
             if let Some(viewer) = app.get_webview_window("viewer") {
                 let window = viewer.clone();
@@ -173,7 +179,19 @@ pub fn run() {
             print_viewer,
             quit_app,
             history_store::load_history_workspace,
-            history_store::save_history_workspace
+            history_store::save_history_workspace,
+            history_store::update_history_scroll,
+            history_store::load_drafts,
+            history_store::save_drafts,
+            image_upload::get_image_upload_snapshot,
+            image_upload::set_image_upload_recording,
+            image_upload::configure_image_upload,
+            image_upload::check_image_upload_target,
+            image_upload::start_image_upload,
+            image_upload::cancel_image_upload,
+            image_upload::dismiss_image_upload,
+            image_upload::copy_image_upload_path,
+            image_upload::open_image_upload_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running PasteLens");

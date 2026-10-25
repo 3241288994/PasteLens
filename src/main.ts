@@ -31,6 +31,7 @@ import {
   saveSvgMarkup,
 } from "./export";
 import { filePathFromHref } from "./file-link";
+import { initializeImageUpload } from "./image-upload";
 import {
   createHistoryEntry,
   filterHistoryEntries,
@@ -48,6 +49,7 @@ import {
   hasNativeHistoryStore,
   loadNativeHistoryWorkspace,
   saveNativeHistoryWorkspace,
+  updateNativeHistoryScroll,
 } from "./history-store";
 import { renderMermaidBlocks } from "./mermaid-renderer";
 import {
@@ -64,8 +66,18 @@ import type { RecoveryResult } from "./recovery/types";
 import { renderMarkdown } from "./render";
 import { DEMO_TEXT } from "./sample";
 import { webUrlFromHref } from "./web-link";
+import { draftTitle, parseDrafts, type DraftEntry } from "./drafts";
+import { hasNativeDraftStore, loadNativeDrafts, saveNativeDrafts } from "./draft-store";
+import {
+  createResultEditSession,
+  isResultEditDirty,
+  resumeResultEditSession,
+  updateResultEditSession,
+  type ResultEditSession,
+} from "./edit-session";
 
-type ViewMode = "preview" | "split";
+type ViewMode = "preview" | "split" | "edit";
+type WorkspaceMode = "reader" | "drafts";
 
 interface ActiveAskSelection {
   text: string;
@@ -81,8 +93,22 @@ function requiredElement<T extends HTMLElement>(selector: string): T {
 }
 
 const sourceInput = requiredElement<HTMLTextAreaElement>("#source-input");
+const appShell = requiredElement<HTMLElement>("#app-shell");
+const draftbook = requiredElement<HTMLElement>("#draftbook");
+const showReaderWorkspaceButton = requiredElement<HTMLButtonElement>("#show-reader-workspace");
+const showDraftWorkspaceButton = requiredElement<HTMLButtonElement>("#show-draft-workspace");
+const newDraftButton = requiredElement<HTMLButtonElement>("#new-draft");
+const draftList = requiredElement<HTMLElement>("#draft-list");
+const draftTitleInput = requiredElement<HTMLInputElement>("#draft-title");
+const draftContentInput = requiredElement<HTMLElement>("#draft-content");
+const draftSaveStatus = requiredElement<HTMLElement>("#draft-save-status");
+const deleteDraftButton = requiredElement<HTMLButtonElement>("#delete-draft");
 const preview = requiredElement<HTMLElement>("#preview");
 const workspace = requiredElement<HTMLElement>("#workspace");
+const resultEditor = requiredElement<HTMLTextAreaElement>("#result-editor");
+const resultEditCount = requiredElement<HTMLElement>("#result-edit-count");
+const applyResultEditButton = requiredElement<HTMLButtonElement>("#apply-result-edit");
+const cancelResultEditButton = requiredElement<HTMLButtonElement>("#cancel-result-edit");
 const renderStatus = requiredElement<HTMLElement>("#render-status");
 const characterCount = requiredElement<HTMLElement>("#character-count");
 const repairDetails = requiredElement<HTMLDetailsElement>("#repair-details");
@@ -110,6 +136,7 @@ const historySearchInput = requiredElement<HTMLInputElement>("#history-search-in
 const historyNoResults = requiredElement<HTMLElement>("#history-no-results");
 const historyProjectList = requiredElement<HTMLElement>("#history-project-list");
 const historyTagList = requiredElement<HTMLElement>("#history-tag-list");
+const toggleHistoryProjectsButton = requiredElement<HTMLButtonElement>("#toggle-history-projects");
 const newHistoryProjectButton = requiredElement<HTMLButtonElement>("#new-history-project");
 const historyProjectCreateForm = requiredElement<HTMLFormElement>("#history-project-create-form");
 const historyProjectNameInput = requiredElement<HTMLInputElement>("#history-project-name");
@@ -151,6 +178,8 @@ const formulaToolbar = requiredElement<HTMLElement>("#formula-toolbar");
 const selectionToolbar = requiredElement<HTMLElement>("#selection-toolbar");
 const askSelectionButton = requiredElement<HTMLButtonElement>("#ask-selection");
 const HISTORY_STORAGE_KEY = "pastelens.render-history.v1";
+const DRAFT_STORAGE_KEY = "pastelens.drafts.v1";
+const WORKSPACE_MODE_STORAGE_KEY = "pastelens.workspace-mode.v1";
 const historyDateFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "numeric",
   day: "numeric",
@@ -158,6 +187,8 @@ const historyDateFormatter = new Intl.DateTimeFormat("zh-CN", {
   minute: "2-digit",
 });
 let currentResult: RecoveryResult = recoverTerminalMarkdown("");
+let viewMode: ViewMode = "preview";
+let resultEditSession: ResultEditSession = createResultEditSession("", "");
 let historyEntries = loadHistoryEntries();
 let historyProjects: HistoryProject[] = [];
 let historyTags: HistoryTag[] = [];
@@ -182,6 +213,14 @@ let activeHistoryTagIds = new Set<string>();
 let selectedHistoryIds = new Set<string>();
 let editingHistoryProjectId: string | null = null;
 let pendingHistoryProjectDeleteId: string | null = null;
+let historyProjectsExpanded = false;
+let historyProjectCreateOpen = false;
+let workspaceMode: WorkspaceMode = loadWorkspaceMode();
+let drafts = loadDrafts();
+let activeDraftId: string | null = null;
+let draftPersistTimer: number | undefined;
+let draftPersistVersion = 0;
+let renderedDraftId: string | null = null;
 const HISTORY_PROJECT_COLORS = ["#6c63e8", "#2f9d8f", "#d87c4a", "#b35db8", "#4d83d6", "#b28a27"];
 let settingsOpen = false;
 let documentSearchOpen = false;
@@ -195,6 +234,7 @@ let askPromptTemplateId = loadAskPromptTemplatePreference();
 let askCustomPrompt = loadAskCustomPromptPreference();
 let selectingPreview = false;
 let pinned = true;
+initializeImageUpload();
 
 autoRenderClipboardToggle.checked = autoRenderClipboard;
 askSelectionEnabledToggle.checked = askSelectionEnabled;
@@ -228,6 +268,233 @@ function loadHistoryEntries(): RenderHistoryEntry[] {
   } catch {
     return [];
   }
+}
+
+function loadWorkspaceMode(): WorkspaceMode {
+  try {
+    const stored = localStorage.getItem(WORKSPACE_MODE_STORAGE_KEY);
+    return stored === "drafts" ? stored : "reader";
+  } catch {
+    return "reader";
+  }
+}
+
+function loadDrafts(): DraftEntry[] {
+  try {
+    return parseDrafts(JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY) ?? "null")) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function createDraft(): DraftEntry {
+  const now = Date.now();
+  return {
+    id: `draft-${now.toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    title: "未命名草稿",
+    content: "",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function activeDraft(): DraftEntry | undefined {
+  return activeDraftId ? drafts.find((draft) => draft.id === activeDraftId) : undefined;
+}
+
+function persistDrafts(): void {
+  const version = ++draftPersistVersion;
+  const snapshot = drafts.map((draft) => ({ ...draft }));
+  draftSaveStatus.dataset.state = "saving";
+  draftSaveStatus.textContent = "正在保存…";
+  if (hasNativeDraftStore()) {
+    window.clearTimeout(draftPersistTimer);
+    draftPersistTimer = window.setTimeout(() => {
+      void saveNativeDrafts(snapshot).then(() => {
+        if (version !== draftPersistVersion) return;
+        draftSaveStatus.dataset.state = "saved";
+        draftSaveStatus.textContent = "已保存";
+      }).catch((error) => {
+        console.error("Unable to persist drafts", error);
+        if (version !== draftPersistVersion) return;
+        draftSaveStatus.dataset.state = "error";
+        draftSaveStatus.textContent = "保存失败，请继续编辑后重试";
+      });
+    }, 180);
+    return;
+  }
+  try {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(snapshot));
+    draftSaveStatus.dataset.state = "saved";
+    draftSaveStatus.textContent = "已保存";
+  } catch {
+    draftSaveStatus.dataset.state = "error";
+    draftSaveStatus.textContent = "保存失败，请检查本地存储";
+  }
+}
+
+function renderDraftbook(): void {
+  drafts.sort((left, right) => right.updatedAt - left.updatedAt);
+  draftList.replaceChildren();
+  const active = activeDraft();
+  draftTitleInput.disabled = !active;
+  draftContentInput.contentEditable = String(Boolean(active));
+  deleteDraftButton.disabled = !active;
+  const nextDraftId = active?.id ?? null;
+  if (nextDraftId !== renderedDraftId) {
+    draftTitleInput.value = active?.title === "未命名草稿" ? "" : (active?.title ?? "");
+    draftContentInput.innerHTML = active?.content ?? "";
+    renderedDraftId = nextDraftId;
+  }
+  if (!active) {
+    draftSaveStatus.dataset.state = "empty";
+    draftSaveStatus.textContent = "新建一篇草稿开始记录";
+  } else if (draftSaveStatus.dataset.state !== "saving" && draftSaveStatus.dataset.state !== "error") {
+    draftSaveStatus.dataset.state = "saved";
+    draftSaveStatus.textContent = "已保存";
+  }
+
+  for (const draft of drafts) {
+    const button = document.createElement("button");
+    const title = document.createElement("strong");
+    const summary = document.createElement("span");
+    const time = document.createElement("small");
+    button.type = "button";
+    button.className = "draft-list-item";
+    button.classList.toggle("active", draft.id === activeDraftId);
+    button.dataset.draftId = draft.id;
+    title.textContent = draft.title;
+    summary.textContent = draft.content.replace(/<[^>]*>/g, " ").trim() || "图片草稿";
+    time.textContent = historyDateFormatter.format(draft.updatedAt);
+    button.append(title, summary, time);
+    draftList.append(button);
+  }
+}
+
+function setWorkspaceMode(mode: WorkspaceMode): void {
+  if (workspaceMode === "drafts" && mode !== "drafts") {
+    flushActiveDraftFromEditor();
+  }
+  workspaceMode = mode;
+  appShell.dataset.workspaceMode = mode;
+  draftbook.hidden = mode !== "drafts";
+  showReaderWorkspaceButton.classList.toggle("active", mode === "reader");
+  showDraftWorkspaceButton.classList.toggle("active", mode === "drafts");
+  showReaderWorkspaceButton.setAttribute("aria-pressed", String(mode === "reader"));
+  showDraftWorkspaceButton.setAttribute("aria-pressed", String(mode === "drafts"));
+  try {
+    localStorage.setItem(WORKSPACE_MODE_STORAGE_KEY, mode);
+  } catch {
+    // The selected workspace will still apply for this session.
+  }
+  if (mode === "drafts") {
+    if (drafts.length === 0) {
+      addDraft();
+      return;
+    }
+    if (!activeDraftId && drafts.length > 0) activeDraftId = drafts[0]?.id ?? null;
+    renderDraftbook();
+    window.setTimeout(() => draftContentInput.focus());
+  }
+}
+
+function addDraft(): void {
+  flushActiveDraftFromEditor();
+  const draft = createDraft();
+  drafts.unshift(draft);
+  activeDraftId = draft.id;
+  persistDrafts();
+  renderDraftbook();
+  window.setTimeout(() => draftContentInput.focus());
+}
+
+function updateActiveDraft(change: Partial<Pick<DraftEntry, "title" | "content">>): void {
+  const draft = activeDraft();
+  if (!draft) return;
+  const previousAutoTitle = draftTitle(draft.content);
+  if (typeof change.content === "string") {
+    draft.content = change.content;
+    if (draft.title === "未命名草稿" || draft.title === previousAutoTitle) draft.title = draftTitle(change.content);
+  }
+  if (typeof change.title === "string") draft.title = change.title.trim() || draftTitle(draft.content);
+  draft.updatedAt = Date.now();
+  persistDrafts();
+  if (document.activeElement !== draftTitleInput) {
+    draftTitleInput.value = draft.title === "未命名草稿" ? "" : draft.title;
+  }
+  const activeItem = draftList.querySelector<HTMLButtonElement>(`[data-draft-id="${draft.id}"]`);
+  if (activeItem) {
+    const title = activeItem.querySelector("strong");
+    const summary = activeItem.querySelector("span");
+    const time = activeItem.querySelector("small");
+    if (title) title.textContent = draft.title;
+    if (summary) summary.textContent = draft.content.replace(/<[^>]*>/g, " ").trim() || "图片草稿";
+    if (time) time.textContent = historyDateFormatter.format(draft.updatedAt);
+  }
+}
+
+function flushActiveDraftFromEditor(): void {
+  const draft = activeDraft();
+  if (!draft || renderedDraftId !== draft.id) return;
+  const content = draftContentInput.innerHTML;
+  if (content !== draft.content) {
+    updateActiveDraft({ content });
+  }
+}
+
+function insertDraftImage(dataUrl: string): void {
+  const image = document.createElement("img");
+  image.src = dataUrl;
+  image.alt = "已粘贴图片";
+  image.className = "draft-image";
+  const selection = window.getSelection();
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+  if (range && draftContentInput.contains(range.commonAncestorContainer)) {
+    range.deleteContents();
+    range.insertNode(image);
+    range.setStartAfter(image);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  } else {
+    draftContentInput.append(image);
+  }
+  updateActiveDraft({ content: draftContentInput.innerHTML });
+  scrollDraftEditorToLatest();
+}
+
+function scrollDraftEditorToLatest(): void {
+  window.requestAnimationFrame(() => {
+    draftContentInput.scrollTop = draftContentInput.scrollHeight;
+  });
+}
+
+async function initializeDrafts(): Promise<void> {
+  let nativeStorageReady = false;
+  try {
+    const persisted = parseDrafts(await loadNativeDrafts());
+    if (persisted && (persisted.length > 0 || drafts.length === 0)) {
+      drafts = persisted;
+    } else if (hasNativeDraftStore()) {
+      await saveNativeDrafts(drafts);
+    }
+    nativeStorageReady = hasNativeDraftStore();
+  } catch (error) {
+    console.error("Unable to initialize drafts", error);
+  }
+  if (nativeStorageReady) {
+    try {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    } catch {
+      // The native copy is already available; stale browser data is harmless.
+    }
+  }
+  if (!activeDraftId && drafts.length > 0) activeDraftId = drafts[0]?.id ?? null;
+  // Native storage may contain a newer copy with the same draft id as the
+  // browser fallback rendered during startup. Force one refresh after loading
+  // it, while keeping normal in-session renders selection-safe.
+  renderedDraftId = null;
+  setWorkspaceMode(workspaceMode);
 }
 
 function loadAutoRenderClipboardPreference(): boolean {
@@ -280,12 +547,16 @@ function syncAskSettingsControls(): void {
 }
 
 function persistHistoryEntries(): void {
+  if (hasNativeHistoryStore()) {
+    scheduleNativeHistoryPersistence();
+    return;
+  }
+
   let candidates = [...historyEntries];
   while (candidates.length > 0) {
     try {
       localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(candidates));
       historyEntries = candidates;
-      scheduleNativeHistoryPersistence();
       return;
     } catch {
       candidates = candidates.slice(0, -1);
@@ -298,7 +569,6 @@ function persistHistoryEntries(): void {
     // The native database remains available even when browser storage is unavailable.
   }
   historyEntries = candidates;
-  scheduleNativeHistoryPersistence();
 }
 
 function currentHistoryWorkspace(): HistoryWorkspace {
@@ -323,6 +593,7 @@ function scheduleNativeHistoryPersistence(): void {
 }
 
 async function initializeHistoryWorkspace(): Promise<void> {
+  let nativeStorageReady = false;
   try {
     const persisted = parseHistoryWorkspace(await loadNativeHistoryWorkspace());
     if (persisted) {
@@ -332,8 +603,16 @@ async function initializeHistoryWorkspace(): Promise<void> {
     } else if (hasNativeHistoryStore()) {
       await saveNativeHistoryWorkspace(currentHistoryWorkspace());
     }
+    nativeStorageReady = hasNativeHistoryStore();
   } catch (error) {
     console.error("Unable to initialize history workspace", error);
+  }
+  if (nativeStorageReady) {
+    try {
+      localStorage.removeItem(HISTORY_STORAGE_KEY);
+    } catch {
+      // The native copy is already available; stale browser data is harmless.
+    }
   }
   renderHistoryList();
 }
@@ -402,8 +681,21 @@ function tagsForEntry(entry: RenderHistoryEntry): HistoryTag[] {
 }
 
 function renderHistoryLibrary(): void {
+  const allCount = historyEntries.length;
+  const inboxCount = historyEntries.filter((entry) => entry.projectId === null).length;
+  const pinnedCount = historyEntries.filter((entry) => entry.pinned).length;
+  const rangeCounts: Record<"all" | "inbox" | "pinned", number> = {
+    all: allCount,
+    inbox: inboxCount,
+    pinned: pinnedCount,
+  };
   document.querySelectorAll<HTMLButtonElement>("[data-history-filter]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.historyFilter === historyScope);
+    const filter = button.dataset.historyFilter as keyof typeof rangeCounts | undefined;
+    button.classList.toggle("active", filter === historyScope);
+    const count = button.querySelector<HTMLElement>("[data-history-filter-count]");
+    if (count && filter) {
+      count.textContent = String(rangeCounts[filter]);
+    }
   });
 
   historyProjectList.replaceChildren();
@@ -457,6 +749,19 @@ function renderHistoryLibrary(): void {
     historyTagList.append(button);
   }
   clearHistoryTagFilterButton.hidden = activeHistoryTagIds.size === 0;
+  syncHistoryProjectsSection();
+}
+
+function syncHistoryProjectsSection(): void {
+  historyProjectList.hidden = !historyProjectsExpanded;
+  historyProjectCreateForm.hidden = !historyProjectsExpanded || !historyProjectCreateOpen;
+  newHistoryProjectButton.hidden = historyProjectCreateOpen;
+  toggleHistoryProjectsButton.setAttribute("aria-expanded", String(historyProjectsExpanded));
+  toggleHistoryProjectsButton.title = historyProjectsExpanded ? "收起科研项目" : "展开科研项目";
+  const indicator = toggleHistoryProjectsButton.querySelector("span:last-child");
+  if (indicator) {
+    indicator.textContent = historyProjectsExpanded ? "⌄" : "›";
+  }
 }
 
 function currentDocumentHistoryEntry(): RenderHistoryEntry | undefined {
@@ -626,6 +931,7 @@ function startNewHistorySession(): void {
 }
 
 async function openHistoryEntry(id: string): Promise<void> {
+  await applyPendingResultEdit();
   const entry = historyEntries.find((candidate) => candidate.id === id);
   if (!entry) {
     return;
@@ -661,7 +967,13 @@ function persistCurrentHistoryScroll(): void {
   historyEntries = historyEntries.map((candidate) =>
     candidate.id === currentHistoryId ? { ...candidate, scrollTop: preview.scrollTop } : candidate,
   );
-  persistHistoryEntries();
+  if (hasNativeHistoryStore()) {
+    void updateNativeHistoryScroll(entry.id, preview.scrollTop).catch((error) => {
+      console.error("Unable to persist history scroll position", error);
+    });
+  } else {
+    persistHistoryEntries();
+  }
 }
 
 function deleteHistoryEntry(id: string): void {
@@ -685,8 +997,10 @@ function libraryNameKey(value: string): string {
 
 function setHistoryProjectCreateOpen(open: boolean, project?: HistoryProject): void {
   editingHistoryProjectId = project?.id ?? null;
-  historyProjectCreateForm.hidden = !open;
-  newHistoryProjectButton.hidden = open;
+  historyProjectCreateOpen = open;
+  if (open) {
+    historyProjectsExpanded = true;
+  }
   saveHistoryProjectButton.textContent = project ? "保存" : "创建";
   if (open) {
     historyProjectNameInput.value = project?.name ?? "";
@@ -694,6 +1008,7 @@ function setHistoryProjectCreateOpen(open: boolean, project?: HistoryProject): v
   } else {
     historyProjectNameInput.value = "";
   }
+  syncHistoryProjectsSection();
 }
 
 function createHistoryProject(nameInput: string, selectProject = true): HistoryProject | undefined {
@@ -1003,10 +1318,10 @@ function decorateCopyableFileLinks(): void {
     link.classList.add("copyable-file-link");
     link.dataset.copyValue = path;
     link.dataset.copyPrompt = "复制文件路径";
-    link.dataset.copySuccess = "已复制文件路径";
-    link.title = `点击复制：${path}`;
+    link.dataset.copySuccess = "文件路径已复制";
+    link.title = `复制文件路径：${path}`;
     link.setAttribute("role", "button");
-    link.setAttribute("aria-label", `${label}，点击复制文件路径`);
+    link.setAttribute("aria-label", `${label}，复制文件路径`);
   }
 }
 
@@ -1209,6 +1524,10 @@ async function renderCurrentClipboardOnOpen(): Promise<void> {
   if (!autoRenderClipboard || autoClipboardBusy) {
     return;
   }
+  if (isResultEditDirty(resultEditSession)) {
+    renderStatus.textContent = "存在未应用修改，已跳过剪贴板自动渲染";
+    return;
+  }
   autoClipboardBusy = true;
   try {
     const text = await clipboardText();
@@ -1305,10 +1624,67 @@ function scheduleRendering(): void {
 }
 
 function setMode(mode: ViewMode): void {
+  if (mode === "edit") {
+    resultEditSession = resumeResultEditSession(
+      resultEditSession,
+      sourceInput.value,
+      currentResult.normalized,
+    );
+    if (resultEditor.value !== resultEditSession.value) {
+      resultEditor.value = resultEditSession.value;
+    }
+    syncResultEditControls();
+  }
+  if (mode === viewMode) {
+    if (mode === "edit") window.requestAnimationFrame(() => resultEditor.focus());
+    return;
+  }
+  viewMode = mode;
   workspace.dataset.mode = mode;
   document.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((button) => {
     button.classList.toggle("active", button.dataset.mode === mode);
   });
+  if (mode === "edit") {
+    window.requestAnimationFrame(() => resultEditor.focus());
+  }
+}
+
+function syncResultEditControls(): void {
+  const dirty = isResultEditDirty(resultEditSession);
+  resultEditCount.textContent = `${resultEditor.value.length.toLocaleString("zh-CN")} 字符${dirty ? " · 未应用" : ""}`;
+  applyResultEditButton.disabled = !dirty;
+  workspace.toggleAttribute("data-edit-dirty", dirty);
+}
+
+async function applyResultEdit(targetMode: Exclude<ViewMode, "edit"> = "preview"): Promise<void> {
+  resultEditSession = updateResultEditSession(resultEditSession, resultEditor.value);
+  const edited = resultEditSession.value;
+  if (!sourceInput.value.trim()) {
+    renderStatus.textContent = "请先粘贴并渲染文档";
+    return;
+  }
+  if (!isResultEditDirty(resultEditSession)) {
+    setMode(targetMode);
+    return;
+  }
+  persistCurrentHistoryScroll();
+  sourceInput.value = edited;
+  // Keep the current history id so project, tag and pin metadata survive.
+  viewingHistoryEntry = false;
+  pendingHistoryScrollTop = 0;
+  resultEditSession = createResultEditSession(edited, edited);
+  syncResultEditControls();
+  setMode(targetMode);
+  await updateRendering();
+  resultEditSession = createResultEditSession(sourceInput.value, currentResult.normalized);
+  syncResultEditControls();
+  renderStatus.textContent = "已应用修改并更新当前历史";
+}
+
+async function applyPendingResultEdit(): Promise<void> {
+  if (isResultEditDirty(resultEditSession)) {
+    await applyResultEdit("preview");
+  }
 }
 
 async function clipboardText(): Promise<string> {
@@ -1524,6 +1900,7 @@ sourceInput.addEventListener("paste", () => {
 
 requiredElement<HTMLButtonElement>("#paste-clipboard").addEventListener("click", async () => {
   try {
+    await applyPendingResultEdit();
     persistCurrentHistoryScroll();
     startNewHistorySession();
     sourceInput.value = await clipboardText();
@@ -1537,6 +1914,7 @@ requiredElement<HTMLButtonElement>("#paste-clipboard").addEventListener("click",
 });
 
 requiredElement<HTMLButtonElement>("#load-demo").addEventListener("click", async () => {
+  await applyPendingResultEdit();
   persistCurrentHistoryScroll();
   startNewHistorySession();
   sourceInput.value = DEMO_TEXT;
@@ -1546,6 +1924,7 @@ requiredElement<HTMLButtonElement>("#load-demo").addEventListener("click", async
 });
 
 requiredElement<HTMLButtonElement>("#clear-source").addEventListener("click", async () => {
+  await applyPendingResultEdit();
   persistCurrentHistoryScroll();
   startNewHistorySession();
   sourceInput.value = "";
@@ -1564,7 +1943,29 @@ requiredElement<HTMLButtonElement>("#copy-markdown").addEventListener("click", a
 });
 
 document.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((button) => {
-  button.addEventListener("click", () => setMode(button.dataset.mode as ViewMode));
+  button.addEventListener("click", () => {
+    const nextMode = button.dataset.mode as ViewMode;
+    if (viewMode === "edit" && nextMode !== "edit" && isResultEditDirty(resultEditSession)) {
+      void applyResultEdit(nextMode);
+      return;
+    }
+    setMode(nextMode);
+  });
+});
+
+resultEditor.addEventListener("input", () => {
+  resultEditSession = updateResultEditSession(resultEditSession, resultEditor.value);
+  syncResultEditControls();
+});
+applyResultEditButton.addEventListener("click", () => {
+  void applyResultEdit();
+});
+cancelResultEditButton.addEventListener("click", () => {
+  resultEditSession = createResultEditSession(sourceInput.value, currentResult.normalized);
+  resultEditor.value = resultEditSession.value;
+  syncResultEditControls();
+  setMode("preview");
+  renderStatus.textContent = "已取消修改";
 });
 
 exportMenu.addEventListener("click", (event) => {
@@ -1748,7 +2149,58 @@ document.querySelectorAll<HTMLButtonElement>("[data-history-filter]").forEach((b
     renderHistoryList();
   });
 });
+showReaderWorkspaceButton.addEventListener("click", () => setWorkspaceMode("reader"));
+showDraftWorkspaceButton.addEventListener("click", () => setWorkspaceMode("drafts"));
+newDraftButton.addEventListener("click", addDraft);
+draftList.addEventListener("click", (event) => {
+  const button = (event.target as Element).closest<HTMLButtonElement>("[data-draft-id]");
+  if (!button?.dataset.draftId) return;
+  flushActiveDraftFromEditor();
+  if (activeDraftId === button.dataset.draftId) {
+    draftContentInput.focus();
+    return;
+  }
+  activeDraftId = button.dataset.draftId;
+  renderDraftbook();
+  window.setTimeout(() => draftContentInput.focus());
+});
+draftTitleInput.addEventListener("input", () => updateActiveDraft({ title: draftTitleInput.value }));
+draftContentInput.addEventListener("input", () => {
+  updateActiveDraft({ content: draftContentInput.innerHTML });
+});
+draftContentInput.addEventListener("paste", (event) => {
+  const imageFile = Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith("image/"));
+  if (imageFile) {
+    event.preventDefault();
+    const reader = new FileReader();
+    reader.addEventListener("load", () => insertDraftImage(String(reader.result)));
+    reader.readAsDataURL(imageFile);
+    return;
+  }
+  const text = event.clipboardData?.getData("text/plain");
+  if (text !== undefined) {
+    event.preventDefault();
+    document.execCommand("insertText", false, text);
+  }
+});
+deleteDraftButton.addEventListener("click", () => {
+  flushActiveDraftFromEditor();
+  const draft = activeDraft();
+  if (!draft || !window.confirm(`删除“${draft.title}”吗？此操作无法撤销。`)) return;
+  drafts = drafts.filter((item) => item.id !== draft.id);
+  activeDraftId = drafts[0]?.id ?? null;
+  persistDrafts();
+  renderDraftbook();
+});
 newHistoryProjectButton.addEventListener("click", () => setHistoryProjectCreateOpen(true));
+toggleHistoryProjectsButton.addEventListener("click", () => {
+  historyProjectsExpanded = !historyProjectsExpanded;
+  if (!historyProjectsExpanded) {
+    historyProjectCreateOpen = false;
+    editingHistoryProjectId = null;
+  }
+  syncHistoryProjectsSection();
+});
 cancelHistoryProjectButton.addEventListener("click", () => setHistoryProjectCreateOpen(false));
 historyProjectCreateForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1885,6 +2337,8 @@ historyClearButton.addEventListener("click", () => {
 });
 
 requiredElement<HTMLButtonElement>("#hide-window").addEventListener("click", async () => {
+  flushActiveDraftFromEditor();
+  await applyPendingResultEdit();
   try {
     await invoke("hide_viewer");
   } catch {
@@ -2081,18 +2535,36 @@ window.addEventListener("resize", () => {
 });
 
 window.addEventListener("focus", () => {
-  if (!sourceInput.value) {
+  const activeElement = document.activeElement;
+  const shouldOfferDefaultFocus = !activeElement
+    || activeElement === document.body
+    || activeElement === document.documentElement;
+  if (workspaceMode === "drafts" && shouldOfferDefaultFocus) {
+    draftContentInput.focus();
+  } else if (workspaceMode === "reader" && !sourceInput.value && shouldOfferDefaultFocus) {
     sourceInput.focus();
   }
 });
 
 window.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && (event.key === "Enter" || event.key.toLocaleLowerCase() === "s")) {
+    if (viewMode === "edit") {
+      event.preventDefault();
+      void applyResultEdit();
+      return;
+    }
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "f") {
     event.preventDefault();
     setDocumentSearchOpen(true);
     return;
   }
   if (event.key === "Escape") {
+    if (viewMode === "edit" && isResultEditDirty(resultEditSession)) {
+      event.preventDefault();
+      renderStatus.textContent = "修改仍保留；请选择“应用修改”或“取消”";
+      return;
+    }
     if (activeAskSelection) {
       hideSelectionToolbar();
       window.getSelection()?.removeAllRanges();
@@ -2121,15 +2593,25 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-window.addEventListener("beforeunload", persistCurrentHistoryScroll);
+window.addEventListener("beforeunload", (event) => {
+  persistCurrentHistoryScroll();
+  flushActiveDraftFromEditor();
+  if (isResultEditDirty(resultEditSession)) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
 
 if ("__TAURI_INTERNALS__" in window) {
   void listen("viewer-opened", () => {
-    void renderCurrentClipboardOnOpen();
+    if (workspaceMode === "reader") {
+      void renderCurrentClipboardOnOpen();
+    }
   });
 }
 
 renderHistoryList();
-void initializeHistoryWorkspace().finally(() => {
+setWorkspaceMode(workspaceMode);
+void Promise.all([initializeHistoryWorkspace(), initializeDrafts()]).finally(() => {
   void updateRendering();
 });

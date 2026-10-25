@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities required by the PasteLens floating window and local clipboard renderer",
-  "windows": ["ball", "viewer"],
+  "windows": ["ball", "viewer", "upload-hud"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
